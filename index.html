@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0d1114">
+<link rel="icon" href="icon-192.png">
 <title>로잉 VR 테스트</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
 <style>
@@ -103,6 +106,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   </div>
 
   <button id="vrBtn" class="big" disabled>VR 시작</button>
+
+  <button id="installBtn" hidden>Quest 앱으로 설치 (다음부터 앱 목록에서 실행)</button>
+  <div class="note" id="installNote" hidden>Quest 브라우저 주소창 오른쪽 메뉴(⋯)에서 <b>"앱 설치"</b>를 누르면 앱 목록에 아이콘이 생깁니다.</div>
 
   <a href="yt.html" style="display:block;text-align:center;color:var(--accent);border:1px dashed var(--accent);border-radius:8px;padding:10px;text-decoration:none;font-weight:600">유튜브 영상으로 저어 보기 →</a>
 
@@ -508,6 +514,19 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   if (location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.protocol === "file:") loadVideo("river.mp4", "river.mp4");
   else $("vidNote").textContent = "'파일 고르기'를 눌러 Quest에 저장해 둔 영상을 골라 주세요.";
 })();
+</script>
+<script>
+// ---------- 앱 설치 ----------
+(() => {
+  const standalone = matchMedia("(display-mode: standalone)").matches;
+  if (standalone) return;
+  let deferred = null;
+  const btn = document.getElementById("installBtn"), note = document.getElementById("installNote");
+  addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferred = e; btn.hidden = false; note.hidden = true; });
+  btn.onclick = async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice.catch(() => {}); deferred = null; btn.hidden = true; };
+  setTimeout(() => { if (!deferred) note.hidden = false; }, 2500);
+})();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
 </body>
 </html>
