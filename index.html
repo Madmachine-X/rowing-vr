@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로잉 VR 테스트</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: 왼쪽 미리보기 화면 + 오른쪽 설정 카드. VR에 들어가면 헤드셋이 화면을 대신함 */
+:root {
+  --bg: #0d1114;
+  --panel: #151c20;
+  --line: rgba(160,180,190,0.18);
+  --fg: #e6ecee;
+  --muted: #8d9ba1;
+  --accent: #f2a33a;
+  --water: #4fb3c8;
+  --font-ui: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--font-ui); display: flex; }
+#view { flex: 1 1 auto; min-width: 0; position: relative; cursor: ns-resize; touch-action: none; }
+#view canvas { display: block; width: 100%; height: 100%; }
+.side { width: 340px; flex: 0 0 auto; background: var(--panel); border-left: 1px solid var(--line); padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+h1 { font-size: 18px; margin: 0; }
+.group { display: flex; flex-direction: column; gap: 6px; }
+.lab { font-size: 13px; color: var(--muted); }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.seg.two { grid-template-columns: 1fr 1fr; }
+button, .filebtn { background: rgba(255,255,255,0.08); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font: 500 14px var(--font-ui); cursor: pointer; text-align: center; }
+button:hover, .filebtn:hover { background: rgba(255,255,255,0.14); }
+button:focus-visible, input:focus-visible, .filebtn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.on { background: rgba(242,163,58,0.22); border-color: var(--accent); }
+button.big { background: var(--accent); color: #1a1206; border: 0; font-size: 17px; font-weight: 600; padding: 14px; }
+button.big:disabled { background: #3a4248; color: var(--muted); cursor: not-allowed; }
+.filebtn input { display: none; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.row { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); }
+.row b { font: 500 13px var(--font-num); color: var(--fg); }
+.note { font-size: 13px; color: var(--muted); }
+.status { font-size: 13px; padding: 10px 12px; border-radius: 8px; background: rgba(79,179,200,0.12); border: 1px solid rgba(79,179,200,0.35); }
+.status.bad { background: rgba(200,80,60,0.15); border-color: rgba(200,80,60,0.5); }
+.help { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; line-height: 1.6; }
+.help b { color: var(--fg); }
+#stats { position: absolute; left: 12px; bottom: 12px; background: rgba(13,17,20,0.8); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; font: 600 15px var(--font-num); display: grid; grid-template-columns: auto auto; gap: 2px 16px; pointer-events: none; }
+#stats span { color: var(--muted); font: 400 12px var(--font-ui); }
+@media (max-width: 760px) { body { flex-direction: column; } .side { width: auto; border-left: 0; border-top: 1px solid var(--line); max-height: 55%; } }
+</style>
+</head>
+<body>
+<div id="view">
+  <div id="stats">
+    <span>페이스 /500m</span><div id="sPace">--:--</div>
+    <span>스트로크</span><div id="sSpm">0 spm</div>
+    <span>영상 배속</span><div id="sRate">0.00×</div>
+  </div>
+</div>
+
+<aside class="side">
+  <h1>로잉 VR 테스트</h1>
+  <div id="status" class="status">준비 중…</div>
+
+  <div class="group">
+    <div class="lab">영상</div>
+    <div class="seg two">
+      <label class="filebtn">파일 고르기<input id="fileIn" type="file" accept="video/*"></label>
+      <button id="defBtn">river.mp4 불러오기</button>
+    </div>
+    <div class="note" id="vidNote">이 파일과 같은 폴더에 있는 river.mp4를 자동으로 불러옵니다.</div>
+  </div>
+
+  <div class="group">
+    <div class="lab">영상 형식</div>
+    <div class="seg">
+      <button id="fmtFlat" class="on">일반</button>
+      <button id="fmt360">360</button>
+      <button id="fmt180">180 입체</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="lab">영상 속도 반영 방식 (VR 안에서는 A 버튼)</div>
+    <div class="seg two">
+      <button id="mInstant">즉각 반응</button>
+      <button id="mSmooth" class="on">부드럽게</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="row"><span>부드러움 정도</span><b id="tauVal">3.0초</b></div>
+    <input id="tau" type="range" min="0.5" max="8" step="0.5" value="3">
+  </div>
+  <div class="group">
+    <div class="row"><span>촬영 당시 배 속도 (1배속 기준)</span><b id="refVal">12 km/h</b></div>
+    <input id="ref" type="range" min="4" max="30" step="1" value="12">
+  </div>
+  <div class="group">
+    <div class="row"><span>당기는 힘 배율</span><b id="powVal">1.0×</b></div>
+    <input id="pow" type="range" min="0.3" max="3" step="0.1" value="1">
+  </div>
+
+  <button id="vrBtn" class="big" disabled>VR 시작</button>
+
+  <div class="help">
+    <b>VR 안에서 젓는 법</b><br>
+    양손 컨트롤러를 로잉 핸들처럼 모아 쥐고, 팔을 앞으로 뻗었다가(캐치) 몸 쪽으로 당기세요(드라이브). 버튼은 누를 필요 없습니다. 처음 몇 번 크게 저으면 팔 길이에 맞춰 자동으로 맞춰집니다.<br><br>
+    <b>버튼</b><br>
+    · 그립(옆 버튼): 지금 보는 방향을 정면으로 다시 맞춤<br>
+    · A 버튼: 즉각 반응 / 부드럽게 전환<br>
+    · 메타 버튼: VR 종료<br><br>
+    <b>PC에서 미리보기</b><br>
+    왼쪽 화면을 누른 채 아래로 끌면 당기기, 오른쪽 버튼으로 끌면 둘러보기.
+  </div>
+</aside>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const statusEl = $("status");
+  function setStatus(msg, bad) { statusEl.textContent = msg; statusEl.classList.toggle("bad", !!bad); }
+
+  if (!window.THREE) { setStatus("3D 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.", true); return; }
+
+  // ---------- 설정 상태 ----------
+  const S = {
+    format: "flat", mode: "smooth", tau: 3, vRef: 12 / 3.6, power: 1,
+    p: 0, pPrev: 0, v: 0, vSmooth: 0, rate: 0, dist: 0,
+    peak: false, strokes: [], spm: 0,
+    dMax: 0.55, dMin: 0.22,          // 팔 뻗은 거리 / 당긴 거리 (m), 자동 보정
+    yaw: 0, inVR: false,
+  };
+
+  // ---------- three 기본 ----------
+  const view = $("view");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+  renderer.xr.enabled = true;
+  renderer.xr.setReferenceSpaceType("local");
+  view.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05080a);
+  const camera = new THREE.PerspectiveCamera(80, 1, 0.05, 2000);
+  camera.layers.enable(1);           // PC 미리보기에서는 왼쪽 눈 영상
+  const world = new THREE.Group();   // 정면 맞추기용
+  scene.add(world);
+  scene.add(new THREE.HemisphereLight(0xdde8ff, 0x334433, 1.1));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.6); sun.position.set(1, 3, 2); scene.add(sun);
+
+  // ---------- 영상 ----------
+  const video = document.createElement("video");
+  video.muted = true; video.loop = true; video.playsInline = true; video.crossOrigin = "anonymous";
+  const vtex = new THREE.VideoTexture(video);
+  vtex.minFilter = THREE.LinearFilter; vtex.magFilter = THREE.LinearFilter;
+  const vmat = new THREE.MeshBasicMaterial({ map: vtex, side: THREE.FrontSide });
+  const vmatBack = new THREE.MeshBasicMaterial({ map: vtex, side: THREE.BackSide });
+  const videoGroup = new THREE.Group(); world.add(videoGroup);
+
+  function editU(geo, fn) {
+    const uv = geo.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setX(i, fn(uv.getX(i)));
+    uv.needsUpdate = true; return geo;
+  }
+  function buildVideoMeshes() {
+    while (videoGroup.children.length) {
+      const m = videoGroup.children.pop(); m.geometry.dispose();
+    }
+    if (S.format === "flat") {
+      // 앞쪽으로 휘어진 큰 스크린 (반경 8m, 100도)
+      const aspect = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9;
+      const R = 8, len = THREE.MathUtils.degToRad(100), h = R * len / aspect;
+      const g = new THREE.CylinderGeometry(R, R, h, 96, 1, true, Math.PI - len / 2, len);
+      editU(g, u => 1 - u);
+      const m = new THREE.Mesh(g, vmatBack); m.position.y = -0.4; videoGroup.add(m);
+    } else if (S.format === "360") {
+      const g = new THREE.SphereGeometry(60, 96, 64); g.scale(-1, 1, 1);
+      const m = new THREE.Mesh(g, vmat); m.rotation.y = -Math.PI / 2; videoGroup.add(m);
+    } else {
+      // VR180 좌우 나란히(SBS): 왼쪽 눈 = 레이어1, 오른쪽 눈 = 레이어2
+      for (const eye of [1, 2]) {
+        const g = new THREE.SphereGeometry(60, 64, 64, Math.PI, Math.PI); g.scale(-1, 1, 1);
+        editU(g, u => u * 0.5 + (eye === 2 ? 0.5 : 0));
+        const m = new THREE.Mesh(g, vmat); m.layers.set(eye); videoGroup.add(m);
+      }
+    }
+  }
+  video.addEventListener("loadedmetadata", () => {
+    buildVideoMeshes();
+    setReady(`영상 준비됨 · ${video.videoWidth}×${video.videoHeight}`);
+  });
+  video.addEventListener("error", () => {
+    setStatus("영상을 불러오지 못했습니다. 같은 폴더에 river.mp4가 있는지, 또는 '파일 고르기'로 MP4 파일을 골라 주세요.", true);
+  });
+  function loadVideo(src, label) {
+    video.src = src; video.load();
+    $("vidNote").textContent = "영상: " + label;
+  }
+  $("fileIn").onchange = e => {
+    const f = e.target.files[0]; if (!f) return;
+    loadVideo(URL.createObjectURL(f), f.name);
+  };
+  $("defBtn").onclick = () => loadVideo("river.mp4?" + Date.now(), "river.mp4");
+
+  // ---------- 배 · 노 ----------
+  const boat = new THREE.Group(); world.add(boat);
+  const SEAT_Y = -0.75, WATER_Y = -1.05;
+  const hullMat = new THREE.MeshStandardMaterial({ color: 0xece6d8, roughness: 0.5 });
+  const deckMat = new THREE.MeshStandardMaterial({ color: 0x2a2f33, roughness: 0.8 });
+  {
+    // 뱃머리 (앞으로 길게 뻗은 쐐기)
+    const shape = new THREE.Shape();
+    shape.moveTo(-0.2, 0); shape.lineTo(0.2, 0); shape.lineTo(0, -4.2); shape.lineTo(-0.2, 0);
+    const g = new THREE.ExtrudeGeometry(shape, { depth: 0.12, bevelEnabled: false });
+    g.rotateX(Math.PI / 2);
+    const bow = new THREE.Mesh(g, hullMat); bow.position.set(0, WATER_Y + 0.14, -0.35); boat.add(bow);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.035, 16, 12), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+    ball.position.set(0, WATER_Y + 0.1, -4.55); boat.add(ball);
+    // 리거(노 받침대)
+    for (const s of [-1, 1]) {
+      const rig = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.75, 8), deckMat);
+      rig.rotation.z = Math.PI / 2; rig.position.set(s * 0.45, SEAT_Y, 0.05); boat.add(rig);
+    }
+  }
+  const oars = [-1, 1].map(s => {
+    const pivot = new THREE.Group(); pivot.position.set(s * 0.82, SEAT_Y, 0.05); boat.add(pivot);
+    const shaftMat = new THREE.MeshStandardMaterial({ color: 0x1c1f22, roughness: 0.6 });
+    const outLen = 2.0, inLen = 0.85;
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, outLen + inLen, 10), shaftMat);
+    shaft.rotation.z = Math.PI / 2; shaft.position.x = s * (outLen - inLen) / 2; pivot.add(shaft);
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.2, 0.02), new THREE.MeshStandardMaterial({ color: 0xf2a33a, roughness: 0.4 }));
+    blade.position.x = s * (outLen - 0.12); pivot.add(blade);
+    return { s, pivot, blade };
+  });
+  // 물보라
+  const splashGeo = new THREE.SphereGeometry(0.03, 6, 4);
+  const splashMat = new THREE.MeshBasicMaterial({ color: 0xf0faff, transparent: true, opacity: 0.85 });
+  const splashes = [];
+  function splash(strength) {
+    for (const o of oars) {
+      const wp = new THREE.Vector3(); o.blade.getWorldPosition(wp); world.worldToLocal(wp);
+      for (let i = 0; i < 14 * strength; i++) {
+        const m = new THREE.Mesh(splashGeo, splashMat.clone());
+        m.position.copy(wp); m.position.y = WATER_Y;
+        m.userData = { v: new THREE.Vector3((Math.random() - 0.5) * 1.2, 0.8 + Math.random() * 1.4 * strength, (Math.random() - 0.5) * 1.2), t: 0, life: 0.5 + Math.random() * 0.3 };
+        world.add(m); splashes.push(m);
+      }
+    }
+  }
+  function updateSplashes(dt) {
+    for (let i = splashes.length - 1; i >= 0; i--) {
+      const m = splashes[i], u = m.userData;
+      u.t += dt; u.v.y -= 6 * dt; m.position.addScaledVector(u.v, dt);
+      m.material.opacity = Math.max(0, 0.85 * (1 - u.t / u.life));
+      if (u.t > u.life) { world.remove(m); m.material.dispose(); splashes.splice(i, 1); }
+    }
+  }
+  let recovering = false;
+  function updateOars() {
+    // 캐치: 블레이드가 앞쪽(+55°), 피니시: 뒤쪽(-35°)
+    const a = THREE.MathUtils.degToRad(55 - 90 * S.p);
+    for (const o of oars) {
+      o.pivot.rotation.y = o.s * a;
+      const lift = recovering ? 0.12 : -0.18;           // 드라이브 땐 블레이드가 물에 잠김
+      o.pivot.rotation.z = o.s * (lift - 0.06);
+      o.blade.rotation.x = recovering ? Math.PI / 2 : 0; // 리커버리 땐 블레이드를 눕힘(페더)
+    }
+  }
+
+  // ---------- VR 안 계기판 ----------
+  const hudCv = document.createElement("canvas"); hudCv.width = 640; hudCv.height = 220;
+  const hctx = hudCv.getContext("2d");
+  const hudTex = new THREE.CanvasTexture(hudCv);
+  const hud = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.22), new THREE.MeshBasicMaterial({ map: hudTex, transparent: true }));
+  hud.position.set(0, -0.42, -0.95); hud.rotation.x = -0.45; world.add(hud);
+  let hudLast = 0;
+  function drawHud(now) {
+    if (now - hudLast < 200) return; hudLast = now;
+    const c = hctx; c.clearRect(0, 0, 640, 220);
+    c.fillStyle = "rgba(13,17,20,0.82)"; roundRect(c, 0, 0, 640, 220, 26); c.fill();
+    const cells = [
+      ["페이스 /500m", S.vSmooth > 0.3 ? fmtPace(500 / S.vSmooth) : "--:--", "#f2a33a"],
+      ["스트로크", Math.round(S.spm) + "", "#e6ecee"],
+      ["영상 배속", S.rate.toFixed(2) + "×", "#4fb3c8"],
+    ];
+    cells.forEach(([k, v, col], i) => {
+      const x = 30 + i * 205;
+      c.fillStyle = "#8d9ba1"; c.font = "500 24px 'IBM Plex Sans KR', sans-serif"; c.fillText(k, x, 62);
+      c.fillStyle = col; c.font = "600 64px 'IBM Plex Mono', monospace"; c.fillText(v, x, 140);
+    });
+    c.fillStyle = "#8d9ba1"; c.font = "500 22px 'IBM Plex Sans KR', sans-serif";
+    c.fillText((S.mode === "smooth" ? "부드럽게" : "즉각 반응") + " · " + Math.floor(S.dist) + " m", 30, 196);
+    hudTex.needsUpdate = true;
+  }
+  function roundRect(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+  const fmtPace = s => { s = Math.min(s, 599); return Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0"); };
+
+  // ---------- 컨트롤러 → 핸들 위치 ----------
+  const ctrls = [0, 1].map(i => { const c = renderer.xr.getController(i); scene.add(c); return c; });
+  const ctrlVis = ctrls.map(c => {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.14, 12), new THREE.MeshStandardMaterial({ color: 0x333a3f }));
+    m.rotation.x = Math.PI / 2; c.add(m); return m;
+  });
+  const tmpH = new THREE.Vector3(), tmpC = new THREE.Vector3();
+  function readHandle(dt) {
+    const xrCam = renderer.xr.getCamera(camera);
+    tmpH.setFromMatrixPosition(xrCam.matrixWorld);
+    const fx = -Math.sin(S.yaw), fz = -Math.cos(S.yaw);
+    let sum = 0, n = 0;
+    for (const c of ctrls) {
+      if (!c.visible) continue;
+      tmpC.setFromMatrixPosition(c.matrixWorld);
+      const dx = tmpC.x - tmpH.x, dz = tmpC.z - tmpH.z;
+      if (dx === 0 && dz === 0) continue;
+      sum += dx * fx + dz * fz; n++;
+    }
+    if (!n) return;
+    const d = sum / n;
+    // 자동 보정: 지금까지 가장 멀리 뻗은 거리와 가장 가까이 당긴 거리
+    S.dMax = Math.max(d, S.dMax - 0.015 * dt);
+    S.dMin = Math.min(d, S.dMin + 0.015 * dt);
+    if (S.dMax - S.dMin < 0.22) { const mid = (S.dMax + S.dMin) / 2; S.dMax = mid + 0.11; S.dMin = mid - 0.11; }
+    S.p = THREE.MathUtils.clamp((S.dMax - d) / (S.dMax - S.dMin), 0, 1);
+  }
+
+  // A 버튼(오른손), 그립 = 정면 맞추기
+  let aPrev = false;
+  function pollButtons() {
+    const sess = renderer.xr.getSession(); if (!sess) return;
+    let aNow = false;
+    for (const src of sess.inputSources) {
+      const gp = src.gamepad; if (!gp) continue;
+      if (src.handedness === "right" && gp.buttons[4] && gp.buttons[4].pressed) aNow = true;
+    }
+    if (aNow && !aPrev) setMode(S.mode === "smooth" ? "instant" : "smooth");
+    aPrev = aNow;
+  }
+  ctrls.forEach(c => c.addEventListener("squeezestart", recenter));
+  function recenter() {
+    const xrCam = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
+    const pos = new THREE.Vector3().setFromMatrixPosition(xrCam.matrixWorld);
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion().setFromRotationMatrix(xrCam.matrixWorld));
+    S.yaw = Math.atan2(-dir.x, -dir.z);
+    world.position.copy(pos); world.rotation.set(0, S.yaw, 0);
+  }
+
+  // ---------- 물리 (PC 버전과 같은 모델) ----------
+  const K_DRIVE = 1.9, C_DRAG = 0.06, C_LIN = 0.05;
+  function physics(dt, now) {
+    const hv = (S.p - S.pPrev) / Math.max(dt, 1e-3);
+    recovering = hv < -0.05 || (recovering && hv < 0.05);
+    let a = -C_DRAG * S.v * Math.abs(S.v) - C_LIN * S.v;
+    if (hv > 0.05) a += K_DRIVE * S.power * Math.min(hv, 6) ** 2;
+    S.v = Math.max(0, S.v + a * dt);
+    S.dist += S.v * dt;
+    if (S.p > 0.75) S.peak = true;
+    if (S.peak && S.p < 0.15) { S.peak = false; S.strokes.push(now); if (S.strokes.length > 4) S.strokes.shift(); }
+    if (S.pPrev < 0.06 && S.p >= 0.06 && hv > 0) { splash(1); playSplash(1); }
+    if (S.pPrev < 0.95 && S.p >= 0.95) { splash(0.5); playSplash(0.45); }
+    S.pPrev = S.p;
+    const st = S.strokes;
+    S.spm = st.length >= 2 && now - st[st.length - 1] < 6000 ? 60000 * (st.length - 1) / (st[st.length - 1] - st[0]) : 0;
+    S.vSmooth += (S.v - S.vSmooth) * (1 - Math.exp(-dt / S.tau));
+    S.rate = Math.min(2, (S.mode === "smooth" ? S.vSmooth : S.v) / S.vRef);
+    // 영상에 적용 (파일 영상은 배속을 연속적으로 바꿀 수 있음)
+    if (video.readyState >= 2) {
+      if (S.rate < 0.07) { if (!video.paused) video.pause(); }
+      else {
+        if (Math.abs(video.playbackRate - S.rate) > 0.005) video.playbackRate = S.rate;
+        if (video.paused) video.play().catch(() => {});
+      }
+    }
+  }
+
+  // ---------- 소리 ----------
+  let actx = null, noise = null;
+  function initAudio() {
+    if (actx) return;
+    try {
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      noise = actx.createBuffer(1, actx.sampleRate * 0.6, actx.sampleRate);
+      const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    } catch (e) { actx = null; }
+  }
+  function playSplash(vol) {
+    if (!actx) return;
+    const src = actx.createBufferSource(); src.buffer = noise;
+    const bp = actx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 900 + Math.random() * 500; bp.Q.value = 0.8;
+    const g = actx.createGain(), t = actx.currentTime;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5 * vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+    src.connect(bp); bp.connect(g); g.connect(actx.destination); src.start(t); src.stop(t + 0.5);
+  }
+
+  // ---------- PC 미리보기 입력 ----------
+  let drag = false, look = false, y0 = 0, p0 = 0, lx = 0, ly = 0, pYaw = 0, pPitch = 0;
+  view.addEventListener("contextmenu", e => e.preventDefault());
+  view.addEventListener("pointerdown", e => {
+    view.setPointerCapture(e.pointerId); initAudio();
+    if (e.button === 2) { look = true; lx = e.clientX; ly = e.clientY; }
+    else if (e.button === 0) { drag = true; y0 = e.clientY; p0 = S.p; if (video.readyState >= 2 && video.paused && S.rate > 0.07) video.play().catch(() => {}); }
+  });
+  view.addEventListener("pointermove", e => {
+    if (look) {
+      pYaw -= (e.clientX - lx) * 0.004; pPitch -= (e.clientY - ly) * 0.004;
+      pPitch = THREE.MathUtils.clamp(pPitch, -1.3, 1.3); lx = e.clientX; ly = e.clientY;
+    } else if (drag) {
+      const span = Math.max(160, view.clientHeight * 0.32);
+      S.p = THREE.MathUtils.clamp(p0 + (e.clientY - y0) / span, 0, 1);
+    }
+  });
+  const up = () => { drag = false; look = false; };
+  view.addEventListener("pointerup", up); view.addEventListener("pointercancel", up);
+
+  // ---------- 설정 UI ----------
+  const on = (b, v) => b.classList.toggle("on", v);
+  const fmtBtns = { flat: $("fmtFlat"), "360": $("fmt360"), "180": $("fmt180") };
+  for (const [k, b] of Object.entries(fmtBtns)) b.onclick = () => {
+    S.format = k; for (const [kk, bb] of Object.entries(fmtBtns)) on(bb, kk === k); buildVideoMeshes();
+  };
+  function setMode(m) { S.mode = m; on($("mSmooth"), m === "smooth"); on($("mInstant"), m === "instant"); hudLast = 0; }
+  $("mSmooth").onclick = () => setMode("smooth");
+  $("mInstant").onclick = () => setMode("instant");
+  $("tau").oninput = e => { S.tau = +e.target.value; $("tauVal").textContent = S.tau.toFixed(1) + "초"; };
+  $("ref").oninput = e => { S.vRef = +e.target.value / 3.6; $("refVal").textContent = e.target.value + " km/h"; };
+  $("pow").oninput = e => { S.power = +e.target.value; $("powVal").textContent = S.power.toFixed(1) + "×"; };
+
+  // ---------- 설정 기억 (이 기기 브라우저에만 저장) ----------
+  const PREF_KEY = "rowingvr.prefs";
+  function savePrefs() {
+    try { localStorage.setItem(PREF_KEY, JSON.stringify({ format: S.format, mode: S.mode, tau: S.tau, ref: Math.round(S.vRef * 3.6), power: S.power })); } catch (e) {}
+  }
+  function loadPrefs() {
+    let p = null; try { p = JSON.parse(localStorage.getItem(PREF_KEY) || "null"); } catch (e) {}
+    if (!p) return;
+    if (p.format && fmtBtns[p.format]) fmtBtns[p.format].click();
+    if (p.mode) setMode(p.mode);
+    const setRange = (id, v) => { if (v == null) return; const el = $(id); el.value = v; el.dispatchEvent(new Event("input")); };
+    setRange("tau", p.tau); setRange("ref", p.ref); setRange("pow", p.power);
+  }
+  for (const el of document.querySelectorAll(".side button, .side input")) el.addEventListener("click", () => setTimeout(savePrefs, 0));
+  for (const el of document.querySelectorAll(".side input[type=range]")) el.addEventListener("change", savePrefs);
+
+  // ---------- VR 시작 ----------
+  let xrOK = false, vidOK = false;
+  function setReady(msg) { vidOK = true; refreshBtn(msg); }
+  function refreshBtn(msg) {
+    $("vrBtn").disabled = !xrOK;
+    if (!xrOK) return;
+    setStatus(msg || (vidOK ? "준비 완료. 헤드셋을 쓰고 'VR 시작'을 누르세요." : "VR 사용 가능. 영상이 없으면 배와 노만 보입니다."));
+  }
+  async function checkXR() {
+    if (!window.isSecureContext) {
+      setStatus("VR은 보안 주소에서만 켜집니다. Quest를 USB로 연결하고 'localhost' 주소로 열어 주세요(안내 참고). 지금은 PC 미리보기만 됩니다.", true); return;
+    }
+    if (!navigator.xr) { setStatus("이 브라우저는 VR을 지원하지 않습니다. PC 미리보기만 됩니다. Quest 브라우저에서 열어 주세요.", true); return; }
+    try { xrOK = await navigator.xr.isSessionSupported("immersive-vr"); } catch (e) { xrOK = false; }
+    if (!xrOK) setStatus("이 기기에서는 VR을 시작할 수 없습니다. PC 미리보기만 됩니다.", true);
+    refreshBtn();
+  }
+  $("vrBtn").onclick = async () => {
+    initAudio(); if (actx && actx.state === "suspended") actx.resume();
+    if (renderer.xr.isPresenting) { renderer.xr.getSession().end(); return; }
+    try {
+      const sess = await navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor"] });
+      camera.layers.disable(1);          // 헤드셋에서는 눈마다 레이어를 따로 씀
+      await renderer.xr.setSession(sess);
+      S.inVR = true; $("vrBtn").textContent = "VR 종료";
+      if (video.readyState >= 2) video.play().catch(() => {});
+      setTimeout(recenter, 600);
+      sess.addEventListener("end", () => { S.inVR = false; camera.layers.enable(1); $("vrBtn").textContent = "VR 시작"; world.position.set(0, 0, 0); world.rotation.set(0, 0, 0); S.yaw = 0; });
+    } catch (e) { setStatus("VR을 시작하지 못했습니다: " + e.message, true); }
+  };
+
+  // ---------- 크기 & 루프 ----------
+  function resize() {
+    const w = view.clientWidth, h = view.clientHeight;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  addEventListener("resize", resize); resize();
+
+  let last = performance.now(), statLast = 0;
+  renderer.setAnimationLoop((now) => {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (renderer.xr.isPresenting) { readHandle(dt); pollButtons(); }
+    else if (!drag) { if (S.p > 0) S.p = Math.max(0, S.p - dt / 1.4); }
+    if (!renderer.xr.isPresenting) { camera.rotation.set(pPitch, pYaw, 0, "YXZ"); camera.position.set(0, 0, 0); }
+    physics(dt, now);
+    updateOars(); updateSplashes(dt); drawHud(now);
+    hud.visible = renderer.xr.isPresenting;
+    if (now - statLast > 150) {
+      statLast = now;
+      $("sPace").textContent = S.vSmooth > 0.3 ? fmtPace(500 / S.vSmooth) : "--:--";
+      $("sSpm").textContent = Math.round(S.spm) + " spm";
+      $("sRate").textContent = S.rate.toFixed(2) + "×";
+    }
+    renderer.render(scene, camera);
+  });
+
+  loadPrefs();
+  buildVideoMeshes();
+  checkXR();
+  // 같은 폴더에 river.mp4가 있으면 자동으로 (PC 연결 방식). 인터넷 주소로 열면 '파일 고르기'로 Quest에 저장된 영상을 고름
+  if (location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.protocol === "file:") loadVideo("river.mp4", "river.mp4");
+  else $("vidNote").textContent = "'파일 고르기'를 눌러 Quest에 저장해 둔 영상을 골라 주세요.";
+})();
+</script>
+</body>
+</html>
