@@ -16,7 +16,8 @@
     on: true, mode: "smooth", tau: 3, vRef: 11 / 3.6, power: 1, format: "360", quality: "hd1440", water: true,
     p: 0, pPrev: 0, hv: 0, v: 0, vSmooth: 0, rate: 0, dist: 0,
     peak: false, strokes: [], spm: 0, strokeStart: 0,
-    phase: "recovery", phaseT: 0, drivePower: 0,
+    phase: "recovery", phaseT: 0, drivePower: 0, lastPower: 0.5, peakVel: 0,
+    pf: 0, pfPrev: 0, vel: 0, upFrames: 0,
     dMax: 0.55, dMin: 0.22, yaw: null,
     xr: false, hands: 0, last: performance.now(),
   };
@@ -474,15 +475,26 @@
   function updateOars(dt) {
     // 손 위치 p(0=팔 뻗음, 1=당김) → 노 각도. 손이 앞이면 블레이드도 앞 (앞을 보고 젓는 방식)
     const sweepDeg = (p) => { const d = clamp((0.5 - p) / 0.55, -1, 1); return Math.asin(d) * 180 / Math.PI * 0.78; };  // 약 +62° ~ -48°
-    const target = sweepDeg(S.p);
-    const pushing = S.hv > 0.12 && S.p > 0.03 && S.p < 0.98;
-    const returning = S.hv < -0.08;
-    if (pushing && S.phase !== "drive") setPhase("drive");
-    else if (S.phase === "drive" && (S.p > 0.93 || (S.hv < 0.02 && S.p > 0.6))) setPhase("finish");
-    else if ((S.phase === "finish" || S.phase === "drive") && returning) setPhase("recovery");
+    // 손떨림을 걸러낸 위치(pf)와 속도(vel)로 단계를 판정
+    const k = 1 - Math.exp(-dt * 16);
+    S.pfPrev = S.pf; S.pf = lerp(S.pf, S.p, k);
+    const rawVel = (S.pf - S.pfPrev) / Math.max(dt, 1e-3);
+    S.vel = lerp(S.vel, rawVel, 1 - Math.exp(-dt * 12));
+    const target = sweepDeg(S.pf);
     S.phaseT += dt;
+    if (S.phase === "drive") S.peakVel = Math.max(S.peakVel, S.vel);
+    // 드라이브 시작: 리커버리 중(0.3초 이상)에만, 앞쪽 절반에서, 몸 쪽으로 분명히 당기기 시작할 때(2프레임 연속)
+    if (S.phase === "recovery") {
+      S.upFrames = (S.vel > 0.5 && S.pf < 0.55) ? S.upFrames + 1 : 0;
+      if (S.upFrames >= 2 && S.phaseT > 0.3) setPhase("drive");
+    } else if (S.phase === "drive") {
+      if (S.phaseT > 0.25 && (S.pf > 0.92 || (S.vel < 0.15 && S.pf > 0.55))) setPhase("finish");
+      else if (S.phaseT > 0.25 && S.vel < -0.4) setPhase("recovery");     // 끝까지 안 당기고 바로 돌아온 경우
+    } else if (S.phase === "finish") {
+      if (S.vel < -0.3 || S.phaseT > 1.5) setPhase("recovery");
+    }
 
-    const nearCatch = S.phase === "recovery" && S.p < 0.18;
+    const nearCatch = S.phase === "recovery" && S.pf < 0.2 && S.vel < 0.3;
     if (nearCatch && !squared) { squared = true; sndClunk(0.35); }      // 블레이드 세우는 '딸깍'
     if (S.phase === "drive") squared = false;
 
@@ -507,15 +519,18 @@
   function setPhase(ph) {
     const prev = S.phase; S.phase = ph; S.phaseT = 0;
     if (ph === "drive") {
-      S.strokeStart = performance.now();
-      const power = clamp(S.hv / 4.5, 0.15, 1);
+      S.strokeStart = performance.now(); S.peakVel = S.vel; S.catches = (S.catches || 0) + 1; S.catchLog = (S.catchLog || []).concat([+S.pf.toFixed(2)]);
+      // 캐치 순간엔 아직 속도가 덜 붙어 있으므로 직전 스트로크 세기를 함께 반영
+      const power = clamp(0.5 * S.lastPower + 0.5 * clamp(S.vel / 2.5, 0, 1), 0.15, 1);
       S.drivePower = power;
       sndCatch(power);
       for (const o of oars) addSpray(o, power, 6 + Math.round(10 * power));
       haptic(0.35 + 0.4 * power, 40);
     } else if (ph === "finish") {
-      for (const o of oars) addPuddle(o, S.drivePower);
+      S.lastPower = clamp(S.peakVel / 2.6, 0.15, 1);
+      for (const o of oars) addPuddle(o, S.lastPower);
     } else if (ph === "recovery" && prev !== "recovery") {
+      if (prev === "drive") S.lastPower = clamp(S.peakVel / 2.6, 0.15, 1);
       sndClunk(0.28); sndDrip();                                          // 블레이드 눕히는 '딸깍' + 물방울
       for (const o of oars) addSpray(o, 0.3, 4);
     }
