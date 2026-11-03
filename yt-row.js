@@ -9,14 +9,14 @@
   if (window.__rowVR) { window.__rowVR.toggle(); return; }
 
   const S = {
-    on: true, mode: "smooth", tau: 3, vRef: 11 / 3.6, power: 1, format: "360",
+    on: true, mode: "smooth", tau: 3, vRef: 11 / 3.6, power: 1, format: "360", quality: "hd1440", water: true,
     p: 0, pPrev: 0, v: 0, vSmooth: 0, rate: 0, dist: 0,
     peak: false, strokes: [], spm: 0,
     dMax: 0.55, dMin: 0.22, yaw: null, recenter: false,
     xr: false, hands: 0, last: performance.now(),
   };
   try { Object.assign(S, JSON.parse(localStorage.getItem("rowvr.yt2") || "{}")); } catch (e) {}
-  const save = () => { try { localStorage.setItem("rowvr.yt2", JSON.stringify({ mode: S.mode, tau: S.tau, vRef: S.vRef, power: S.power, format: S.format })); } catch (e) {} };
+  const save = () => { try { localStorage.setItem("rowvr.yt2", JSON.stringify({ mode: S.mode, tau: S.tau, vRef: S.vRef, power: S.power, format: S.format, quality: S.quality, water: S.water })); } catch (e) {} };
   const video = () => document.querySelector("video.html5-main-video") || document.querySelector("video");
 
   // ---------- 패널 ----------
@@ -43,6 +43,17 @@
   const paintFmt = () => { for (const [k, b] of Object.entries(fmtBtns)) b.style.cssText = btnCss + (k === S.format ? onCss : ""); };
   paintFmt();
   panel.appendChild(fmtRow);
+
+  const toggleRow = (label, opts, get, set) => {
+    panel.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin-bottom:4px", label));
+    const r = el("div", "display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px");
+    const bs = {};
+    const paint = () => { for (const [k, b] of Object.entries(bs)) b.style.cssText = btnCss + (String(get()) === k ? onCss : ""); };
+    for (const [k, text] of opts) { const b = el("button", btnCss, text); b.onclick = () => { set(k); paint(); save(); }; bs[k] = b; r.appendChild(b); }
+    paint(); panel.appendChild(r);
+  };
+  toggleRow("화질", [["hd1440", "1440p (부드럽게)"], ["hd2160", "4K (선명하게)"]], () => S.quality, k => { S.quality = k; setQuality(); });
+  toggleRow("소리", [["true", "물소리 (음악 끄기)"], ["false", "유튜브 소리"]], () => S.water, k => { S.water = k === "true"; applySound(); });
 
   const stats = el("div", "display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font:600 18px ui-monospace,Consolas,monospace;margin-bottom:10px");
   const mkStat = (k) => { const w = el("div"); w.appendChild(el("div", "font:400 11px system-ui,sans-serif;color:#8d9ba1", k)); const v = el("div", "", "-"); w.appendChild(v); stats.appendChild(w); return v; };
@@ -77,6 +88,47 @@
   (document.body || document.documentElement).appendChild(panel);
   const setStatus = (t) => { status.textContent = t; };
   setStatus(navigator.xr ? "유튜브 영상이 재생되는지 확인한 뒤 'VR 시작'을 누르세요." : "이 브라우저는 VR을 지원하지 않습니다.");
+
+  // ---------- 화질 고정 ----------
+  function setQuality() {
+    const mp = document.getElementById("movie_player");
+    try { if (mp && mp.setPlaybackQualityRange) mp.setPlaybackQualityRange(S.quality, S.quality); } catch (e) {}
+    try { if (mp && mp.setPlaybackQuality) mp.setPlaybackQuality(S.quality); } catch (e) {}
+  }
+  setQuality();
+
+  // ---------- 소리: 유튜브 음악 대신 물소리 ----------
+  let actx = null, noise = null, ambGain = null, ambSrc = null;
+  function initAudio() {
+    if (actx) return;
+    try {
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      noise = actx.createBuffer(1, actx.sampleRate * 2, actx.sampleRate);
+      const d = noise.getChannelData(0); let last = 0;
+      for (let i = 0; i < d.length; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5; } // 낮게 웅웅대는 물살 소리
+    } catch (e) { actx = null; }
+  }
+  function startAmbience() {
+    if (!actx || ambSrc) return;
+    ambSrc = actx.createBufferSource(); ambSrc.buffer = noise; ambSrc.loop = true;
+    const lp = actx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 700;
+    ambGain = actx.createGain(); ambGain.gain.value = 0.05;
+    ambSrc.connect(lp); lp.connect(ambGain); ambGain.connect(actx.destination); ambSrc.start();
+  }
+  function stopAmbience() { try { if (ambSrc) ambSrc.stop(); } catch (e) {} ambSrc = null; ambGain = null; }
+  function splashSound(vol) {
+    if (!actx || !S.water) return;
+    const src = actx.createBufferSource(); src.buffer = noise;
+    const bp = actx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 900 + Math.random() * 600; bp.Q.value = 0.9;
+    const g = actx.createGain(), t = actx.currentTime;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.9 * vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    src.connect(bp); bp.connect(g); g.connect(actx.destination); src.start(t, Math.random()); src.stop(t + 0.55);
+  }
+  function applySound() {
+    const vid = video();
+    if (S.xr && S.water) { if (vid) vid.muted = true; startAmbience(); }
+    else { if (vid) vid.muted = false; stopAmbience(); }
+  }
 
   // ---------- WebGL: 영상 구면 그리기 ----------
   let gl = null, prog = null, tex = null, buf = null, loc = {}, lastVideoTime = -1, texOK = true;
@@ -128,7 +180,7 @@
 
   function uploadVideo() {
     const vid = video();
-    if (!vid || vid.readyState < 2 || !texOK) return;
+    if (!vid || vid.readyState < 3 || !texOK) return;   // 충분히 받아진 프레임만
     if (vid.currentTime === lastVideoTime) return;
     lastVideoTime = vid.currentTime;
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -163,6 +215,8 @@
     if (session) { session.end(); return; }
     const vid = video();
     if (!vid) { setStatus("유튜브 영상을 찾지 못했습니다. 영상 페이지에서 실행해 주세요."); return; }
+    initAudio(); if (actx && actx.state === "suspended") actx.resume();
+    setQuality();
     try {
       session = await navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor"] });
     } catch (e) { setStatus("VR을 시작하지 못했습니다: " + e.message); session = null; return; }
@@ -174,10 +228,12 @@
     vrBtn.textContent = "VR 종료";
     setStatus("VR 실행 중");
     vid.pause();
+    applySound();
     session.addEventListener("end", () => {
       S.xr = false; session = null; vrBtn.textContent = "VR 시작";
       setStatus("VR 종료됨. 다시 'VR 시작'을 누르면 이어서 됩니다.");
       const v = video(); if (v) v.playbackRate = 1;
+      applySound();
     });
     session.requestAnimationFrame(onXRFrame);
   }
@@ -243,7 +299,8 @@
     S.dMin = Math.min(d, S.dMin + 0.015 * dt);
     if (S.dMax - S.dMin < 0.22) { const m = (S.dMax + S.dMin) / 2; S.dMax = m + 0.11; S.dMin = m - 0.11; }
     const pNew = Math.min(1, Math.max(0, (S.dMax - d) / (S.dMax - S.dMin)));
-    if (S.p < 0.06 && pNew >= 0.06) for (const g of pads) { const h = g.hapticActuators && g.hapticActuators[0]; if (h && h.pulse) h.pulse(0.4, 40).catch(() => {}); }
+    if (S.p < 0.06 && pNew >= 0.06) { splashSound(1); for (const g of pads) { const h = g.hapticActuators && g.hapticActuators[0]; if (h && h.pulse) h.pulse(0.4, 40).catch(() => {}); } }
+    if (S.p < 0.95 && pNew >= 0.95) splashSound(0.4);
     S.p = pNew;
   }
 
@@ -268,6 +325,7 @@
     S.spm = st.length >= 2 && now - st[st.length - 1] < 6000 ? 60000 * (st.length - 1) / (st[st.length - 1] - st[0]) : 0;
     S.vSmooth += (S.v - S.vSmooth) * (1 - Math.exp(-dt / S.tau));
     S.rate = Math.min(2, (S.mode === "smooth" ? S.vSmooth : S.v) / S.vRef);
+    if (ambGain && actx) ambGain.gain.setTargetAtTime(0.04 + 0.22 * Math.min(1, S.vSmooth / 4), actx.currentTime, 0.3);
 
     const vid = video();
     if (vid && S.xr) {
@@ -292,7 +350,7 @@
     toggle() {
       S.on = !S.on;
       panel.style.display = S.on ? "" : "none";
-      if (!S.on) { if (session) session.end(); const v = video(); if (v) v.playbackRate = 1; }
+      if (!S.on) { if (session) session.end(); const v = video(); if (v) { v.playbackRate = 1; v.muted = false; } stopAmbience(); }
       if (S.on) { S.last = performance.now(); requestAnimationFrame(tick); }
     },
   };
