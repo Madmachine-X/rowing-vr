@@ -72,7 +72,7 @@
   slider("부드러움", 0.5, 8, 0.5, () => S.tau, v => S.tau = v, v => v.toFixed(1) + "초");
   slider("당기는 힘", 0.3, 3, 0.1, () => S.power, v => S.power = v, v => v.toFixed(1) + "×");
   settings.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin:6px 0 8px",
-    "VR 안에서: 컨트롤러를 핸들처럼 모아 쥐고 팔을 뻗었다가 몸 쪽으로 당기세요. 멈추려면 트리거를 당기거나 손을 들어 올려 노를 물에 박으세요. 그립 버튼 = 정면 다시 맞추기, A 버튼 = 반응 방식, 메타 버튼 = 종료."));
+    "VR 안에서: 컨트롤러를 핸들처럼 모아 쥐고 팔을 뻗었다가 몸 쪽으로 당기세요. 머리·컨트롤러·손 인식을 함께 써서, 로잉머신에선 컨트롤러 없이 핸들만 잡고 저어도 됩니다. 멈추려면 트리거를 당기거나 손을 들어 올려 노를 물에 박으세요. 그립 버튼 = 정면 다시 맞추기, A 버튼 = 반응 방식, 메타 버튼 = 종료."));
   const closeBtn = el("button", btnCss + ";width:100%", "패널 닫기");
   closeBtn.onclick = () => api.toggle();
   settings.appendChild(closeBtn);
@@ -672,7 +672,7 @@
     if (!vid) { setStatus("유튜브 영상을 찾지 못했습니다. 영상 페이지에서 실행해 주세요."); return; }
     initAudio(); if (actx && actx.state === "suspended") actx.resume();
     setQuality();
-    try { session = await navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor"] }); }
+    try { session = await navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor", "hand-tracking"] }); }
     catch (e) { setStatus("VR을 시작하지 못했습니다: " + e.message); session = null; return; }
     if (!renderer) initScene();
     camera.layers.disable(1);
@@ -720,43 +720,95 @@
     renderer.render(scene, camera);
   }
 
+  // ---------- 동작 인식: 머리 + 컨트롤러 + 손을 함께 ----------
+  // 각 신호를 따로 0(캐치)~1(피니시)로 맞춘 뒤, 지금 믿을 만한 정도에 따라 섞는다.
+  function mkNorm(minRange) {
+    return {
+      max: null, min: null, oMax: null, oMin: null, minRange,
+      upd(d, dt) {
+        if (this.max === null) { this.max = d + minRange / 2; this.min = d - minRange / 2; this.oMax = d; this.oMin = d; }
+        this.max = Math.max(d, this.max - 0.02 * dt); this.min = Math.min(d, this.min + 0.02 * dt);
+        if (this.max - this.min < minRange) { const m = (this.max + this.min) / 2; this.max = m + minRange / 2; this.min = m - minRange / 2; }
+        this.oMax = Math.max(d, this.oMax - 0.03 * dt); this.oMin = Math.min(d, this.oMin + 0.03 * dt);   // 실제로 움직인 폭
+        return clamp((this.max - d) / (this.max - this.min), 0, 1);
+      },
+      range() { return this.oMax === null ? 0 : this.oMax - this.oMin; },
+    };
+  }
+  const NORM = { ctrl: mkNorm(0.30), hand: mkNorm(0.30), head: mkNorm(0.15) };
+  const W = { ctrl: 0, hand: 0, head: 0 }, lastP = {};
+  S.srcText = "";
   function readControllers(frame, now) {
     const ref = renderer.xr.getReferenceSpace();
     const yaw = S.yaw || 0, fx = -Math.sin(yaw), fz = -Math.cos(yaw);
-    let sum = 0, n = 0, aNow = false, gi = 0, ySum = 0, trig = 0; padsNow = [];
+    const ox = worldGroup.position.x, oz = worldGroup.position.z;      // 정면 맞춘 자리(시트 기준점)
+    const along = (x, z) => (x - ox) * fx + (z - oz) * fz;              // 앞쪽으로 얼마나 나가 있나
+    const dt = Math.min(0.05, (now - (readControllers.t || now)) / 1000); readControllers.t = now;
+    let aNow = false, gi = 0, trig = 0;
+    const acc = { ctrl: [0, 0, 0], hand: [0, 0, 0] };                    // [앞쪽 합, 높이 합, 개수]
+    padsNow = [];
     for (const src of session.inputSources) {
       const gp = src.gamepad;
-      if (gp) {
+      if (gp && !src.hand) {
         if (gp.buttons[1] && gp.buttons[1].pressed) S.yaw = null;
         if (src.handedness === "right" && gp.buttons[4] && gp.buttons[4].pressed) aNow = true;
         padsNow.push(gp);
         if (gp.buttons[0]) trig = Math.max(trig, gp.buttons[0].value || (gp.buttons[0].pressed ? 1 : 0));
       }
-      if (!src.gripSpace) continue;
-      const pose = frame.getPose(src.gripSpace, ref);
-      if (!pose) continue;
-      const c = pose.transform.position;
-      sum += (c.x - headPos.x) * fx + (c.z - headPos.z) * fz; n++; ySum += c.y;
-      if (grips[gi]) { grips[gi].visible = true; grips[gi].position.set(c.x, c.y, c.z); grips[gi].rotation.set(0, yaw, Math.PI / 2); gi++; }
+      let pos = null, kind = null;
+      if (src.hand && frame.getJointPose) {                              // 손 인식: 손목 위치
+        const wrist = src.hand.get ? src.hand.get("wrist") : null;
+        const jp = wrist ? frame.getJointPose(wrist, ref) : null;
+        if (jp) { pos = jp.transform.position; kind = "hand"; }
+      } else if (src.gripSpace) {                                        // 컨트롤러
+        const gpz = frame.getPose(src.gripSpace, ref);
+        if (gpz && !gpz.emulatedPosition) { pos = gpz.transform.position; kind = "ctrl"; }
+      }
+      if (!pos) continue;
+      const a = acc[kind]; a[0] += along(pos.x, pos.z); a[1] += pos.y; a[2]++;
+      if (grips[gi]) { grips[gi].visible = true; grips[gi].position.set(pos.x, pos.y, pos.z); grips[gi].rotation.set(0, yaw, Math.PI / 2); gi++; }
     }
     for (; gi < grips.length; gi++) grips[gi].visible = false;
     if (aNow && !aPrev) { S.mode = S.mode === "smooth" ? "instant" : "smooth"; paintMode(); save(); }
     aPrev = aNow;
-    S.hands = n;
     S.trig = trig;
-    if (!n || S.yaw === null) { S.brake = trig; return; }
-    // 손 높이: 평소 젓는 높이(기준)보다 6cm 이상 들어 올리고 손을 멈추면 노 박기
-    const hy = ySum / n, dtb = Math.min(0.05, (now - (readControllers.tb || now)) / 1000); readControllers.tb = now;
-    if (S.handBase === null) S.handBase = hy;
-    if (S.phase !== "brake") S.handBase = lerp(S.handBase, hy, 1 - Math.exp(-dtb * 0.4));
-    S.handY = hy;
-    const raise = (S.vel > -0.4 && S.vel < 0.4) ? smooth((hy - S.handBase - 0.06) / 0.07) : 0;
+    if (S.yaw === null) { S.brake = trig; return; }
+
+    // 각 신호를 0~1로
+    const P = {}, target = { ctrl: 0, hand: 0, head: 0 };
+    for (const k of ["ctrl", "hand"]) {
+      const a = acc[k];
+      if (a[2]) {
+        P[k] = NORM[k].upd(a[0] / a[2], dt);
+        target[k] = (k === "ctrl" ? 1.0 : 0.7) * Math.max(0.05, smooth((NORM[k].range() - 0.12) / 0.2));
+      }
+    }
+    P.head = NORM.head.upd(along(headPos.x, headPos.z), dt);
+    target.head = 0.6 * Math.max(0.05, smooth((NORM.head.range() - 0.08) / 0.15));
+    // 믿을 만한 정도를 서서히 바꿔서 신호가 끊기거나 잡혀도 튀지 않게
+    let sw = 0, sp = 0;
+    for (const k of ["ctrl", "hand", "head"]) {
+      W[k] = lerp(W[k], target[k], 1 - Math.exp(-dt * 3));
+      if (P[k] !== undefined) lastP[k] = P[k];
+      const v = P[k] !== undefined ? P[k] : lastP[k];          // 잠깐 끊긴 신호는 마지막 값을 붙잡은 채 비중만 줄임
+      if (v !== undefined && W[k] > 0.005) { sw += W[k]; sp += W[k] * v; }
+    }
+    if (sw > 0.02) S.p = sp / sw;
+    const names = { ctrl: "컨트롤러", hand: "손", head: "머리" };
+    S.srcText = ["head", "ctrl", "hand"].filter(k => P[k] !== undefined && W[k] > 0.15).map(k => names[k]).join(" + ") || "움직임 기다리는 중";
+    S.hands = acc.ctrl[2] + acc.hand[2];
+
+    // 노 박기: 트리거, 또는 손(컨트롤러·손 인식)을 멈추고 6cm 이상 들어 올림
+    const hn = acc.ctrl[2] + acc.hand[2];
+    let raise = 0;
+    if (hn) {
+      const hy = (acc.ctrl[1] + acc.hand[1]) / hn;
+      if (S.handBase === null) S.handBase = hy;
+      if (S.phase !== "brake") S.handBase = lerp(S.handBase, hy, 1 - Math.exp(-dt * 0.4));
+      S.handY = hy;
+      raise = (S.vel > -0.4 && S.vel < 0.4) ? smooth((hy - S.handBase - 0.06) / 0.07) : 0;
+    }
     S.brake = Math.max(trig, raise);
-    const d = sum / n, dt = Math.min(0.05, (now - (readControllers.t || now)) / 1000); readControllers.t = now;
-    S.dMax = Math.max(d, S.dMax - 0.015 * dt);
-    S.dMin = Math.min(d, S.dMin + 0.015 * dt);
-    if (S.dMax - S.dMin < 0.22) { const m = (S.dMax + S.dMin) / 2; S.dMax = m + 0.11; S.dMin = m - 0.11; }
-    S.p = clamp((S.dMax - d) / (S.dMax - S.dMin), 0, 1);
   }
 
   // ======================================================================
@@ -800,7 +852,7 @@
       sPace.textContent = S.vSmooth > 0.3 ? fmtPace(500 / S.vSmooth) : "--:--";
       sSpm.textContent = Math.round(S.spm);
       sRate.textContent = S.rate.toFixed(2);
-      if (S.xr && texOK) setStatus(S.hands ? "VR 실행 중 · 컨트롤러 " + S.hands + "개 인식" : "VR 실행 중 · 컨트롤러를 찾는 중");
+      if (S.xr && texOK) setStatus("VR 실행 중 · 인식: " + S.srcText);
     }
   }
   const fmtPace = s => { s = Math.min(s, 599); return Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0"); };
@@ -821,6 +873,15 @@
       return {
         renderer, scene, camera, S,
         brake(b) { S.brake = b; },
+        fuse(mockSession, mockFrame, head, dt) {       // 테스트용: 가짜 VR 프레임으로 인식 + 노 단계 판정
+          const saved = session; session = mockSession;
+          if (!headPos) headPos = new window.THREE.Vector3();
+          headPos.set(head[0], head[1], head[2]); if (S.yaw === null) S.yaw = 0;
+          const now = (this._t = (this._t || 1000) + dt * 1000);
+          readControllers(mockFrame, now); session = saved;
+          updateOars(dt);
+          return { p: S.p, src: S.srcText, W: { ...W }, phase: S.phase, catches: S.catches || 0 };
+        },
         phys(dt) { const now = performance.now(); S.last = now - dt * 1000; step(now); },
         step(dt, p) { S.pPrev = S.p; S.p = p; S.hv = (S.p - S.pPrev) / dt; if (S.phase !== "brake") { S.v = Math.max(S.v, 3); S.vSmooth = 3; } updateOars(dt); updateFx(dt); updateBoatMotion(dt); drawCoach(performance.now() + 1000 * Math.random()); },
         render() { renderer.render(scene, camera); },
