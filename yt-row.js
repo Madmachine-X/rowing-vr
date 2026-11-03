@@ -74,7 +74,7 @@
   slider("당기는 힘", 0.3, 3, 0.1, () => S.power, v => S.power = v, v => v.toFixed(1) + "×");
   panel.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin-top:6px",
     "VR 안에서: 컨트롤러를 핸들처럼 모아 쥐고 팔을 뻗었다가 몸 쪽으로 당기세요. 당길 때마다 짧게 진동합니다. 그립 버튼 = 정면 다시 맞추기, A 버튼 = 반응 방식 전환, 메타 버튼 = 종료."));
-  document.body.appendChild(panel);
+  (document.body || document.documentElement).appendChild(panel);
   const setStatus = (t) => { status.textContent = t; };
   setStatus(navigator.xr ? "유튜브 영상이 재생되는지 확인한 뒤 'VR 시작'을 누르세요." : "이 브라우저는 VR을 지원하지 않습니다.");
 
