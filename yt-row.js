@@ -21,7 +21,7 @@
 
   // ---------- 패널 ----------
   const el = (tag, css, text) => { const e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; };
-  const panel = el("div", "position:fixed;right:16px;bottom:16px;z-index:2147483647;width:320px;background:#151c20;color:#e6ecee;border:1px solid #f2a33a;border-radius:12px;padding:14px;font:14px/1.5 system-ui,'Malgun Gothic',sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5)");
+  const panel = el("div", "position:fixed;right:16px;bottom:16px;z-index:2147483647;width:320px;max-height:calc(100vh - 32px);overflow-y:auto;background:#151c20;color:#e6ecee;border:1px solid #f2a33a;border-radius:12px;padding:14px;font:14px/1.5 system-ui,'Malgun Gothic',sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5)");
   panel.appendChild(el("div", "font-weight:700;font-size:15px;margin-bottom:4px;color:#f2a33a", "로잉 VR"));
   const status = el("div", "font-size:13px;color:#8d9ba1;margin-bottom:10px", "");
   panel.appendChild(status);
@@ -29,7 +29,10 @@
   const btnCss = "background:#2a3338;color:#e6ecee;border:1px solid #3d4a51;border-radius:8px;padding:8px 10px;font:500 13px system-ui,sans-serif;cursor:pointer";
   const onCss = ";background:rgba(242,163,58,.25);border-color:#f2a33a";
   const vrBtn = el("button", "width:100%;background:#f2a33a;color:#1a1206;border:0;border-radius:10px;padding:12px;font:700 16px system-ui,sans-serif;cursor:pointer;margin-bottom:10px", "VR 시작");
-  panel.appendChild(vrBtn);
+  // 접는 설정 영역
+  const settings = el("div", "display:none;border-top:1px solid #3d4a51;padding-top:10px;margin-top:4px");
+  const realAppend = panel.appendChild.bind(panel);
+  panel.appendChild = (n) => settings.appendChild(n);   // 아래 설정 항목들은 접는 영역으로
 
   panel.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin-bottom:4px", "영상 형식"));
   const fmtRow = el("div", "display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px");
@@ -58,7 +61,7 @@
   const stats = el("div", "display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font:600 18px ui-monospace,Consolas,monospace;margin-bottom:10px");
   const mkStat = (k) => { const w = el("div"); w.appendChild(el("div", "font:400 11px system-ui,sans-serif;color:#8d9ba1", k)); const v = el("div", "", "-"); w.appendChild(v); stats.appendChild(w); return v; };
   const sPace = mkStat("페이스/500m"), sSpm = mkStat("spm"), sRate = mkStat("배속");
-  panel.appendChild(stats);
+  realAppend(stats);
 
   const row = el("div", "display:flex;gap:6px;margin-bottom:8px");
   const modeBtn = el("button", btnCss, "");
@@ -85,6 +88,13 @@
   slider("당기는 힘", 0.3, 3, 0.1, () => S.power, v => S.power = v, v => v.toFixed(1) + "×");
   panel.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin-top:6px",
     "VR 안에서: 컨트롤러를 핸들처럼 모아 쥐고 팔을 뻗었다가 몸 쪽으로 당기세요. 당길 때마다 짧게 진동합니다. 그립 버튼 = 정면 다시 맞추기, A 버튼 = 반응 방식 전환, 메타 버튼 = 종료."));
+  panel.appendChild = realAppend;
+  const setBtn = el("button", btnCss + ";width:100%;margin-bottom:8px", "설정 열기 ▾");
+  setBtn.onclick = () => { const open = settings.style.display === "none"; settings.style.display = open ? "block" : "none"; setBtn.textContent = open ? "설정 닫기 ▴" : "설정 열기 ▾"; };
+  realAppend(setBtn);
+  realAppend(settings);
+  realAppend(vrBtn);
+  vrBtn.style.marginBottom = "0"; vrBtn.style.marginTop = "8px";
   (document.body || document.documentElement).appendChild(panel);
   const setStatus = (t) => { status.textContent = t; };
   setStatus(navigator.xr ? "유튜브 영상이 재생되는지 확인한 뒤 'VR 시작'을 누르세요." : "이 브라우저는 VR을 지원하지 않습니다.");
