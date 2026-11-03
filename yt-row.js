@@ -131,9 +131,8 @@
   function startAmbience() {
     if (!actx || !ambBuf || ambSrc) return;
     ambSrc = actx.createBufferSource(); ambSrc.buffer = ambBuf; ambSrc.loop = true;
-    ambSrc.loopStart = 0.05; ambSrc.loopEnd = ambBuf.duration - 0.05;   // 앞뒤 무음 구간 빼고 반복
     ambGain = actx.createGain(); ambGain.gain.value = 0.25;
-    ambSrc.connect(ambGain); ambGain.connect(actx.destination); ambSrc.start(0, 0.05);
+    ambSrc.connect(ambGain); ambGain.connect(actx.destination); ambSrc.start();
   }
   function stopAmbience() { try { if (ambSrc) ambSrc.stop(); } catch (e) {} ambSrc = null; ambGain = null; }
   let lastStroke = -1;
@@ -142,7 +141,7 @@
     let i = Math.floor(Math.random() * strokeBufs.length);
     if (i === lastStroke) i = (i + 1) % strokeBufs.length; lastStroke = i;   // 같은 소리 연속 방지
     const src = actx.createBufferSource(); src.buffer = strokeBufs[i];
-    src.playbackRate.value = 0.94 + Math.random() * 0.12;                  // 매번 살짝 다르게
+    src.playbackRate.value = 0.96 + Math.random() * 0.08;                  // 매번 살짝 다르게
     const g = actx.createGain(); g.gain.value = vol;
     src.connect(g); g.connect(actx.destination); src.start();
   }
