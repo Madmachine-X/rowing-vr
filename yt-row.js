@@ -18,6 +18,7 @@
     peak: false, strokes: [], spm: 0, strokeStart: 0,
     phase: "recovery", phaseT: 0, drivePower: 0, lastPower: 0.5, peakVel: 0,
     pf: 0, pfPrev: 0, vel: 0, upFrames: 0,
+    brake: 0, trig: 0, handY: null, handBase: null,
     dMax: 0.55, dMin: 0.22, yaw: null,
     xr: false, hands: 0, last: performance.now(),
   };
@@ -71,7 +72,7 @@
   slider("부드러움", 0.5, 8, 0.5, () => S.tau, v => S.tau = v, v => v.toFixed(1) + "초");
   slider("당기는 힘", 0.3, 3, 0.1, () => S.power, v => S.power = v, v => v.toFixed(1) + "×");
   settings.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin:6px 0 8px",
-    "VR 안에서: 컨트롤러를 핸들처럼 모아 쥐고 팔을 뻗었다가 몸 쪽으로 당기세요. 그립 버튼 = 정면 다시 맞추기, A 버튼 = 반응 방식, 메타 버튼 = 종료."));
+    "VR 안에서: 컨트롤러를 핸들처럼 모아 쥐고 팔을 뻗었다가 몸 쪽으로 당기세요. 멈추려면 트리거를 당기거나 손을 들어 올려 노를 물에 박으세요. 그립 버튼 = 정면 다시 맞추기, A 버튼 = 반응 방식, 메타 버튼 = 종료."));
   const closeBtn = el("button", btnCss + ";width:100%", "패널 닫기");
   closeBtn.onclick = () => api.toggle();
   settings.appendChild(closeBtn);
@@ -176,6 +177,29 @@
     if (!SB || !S.water) return;
     playAt(pick(SB.drip, "dL"), -0.75, 0.5, 0.05, null);
     playAt(pick(SB.drip, "dR"), 0.75, 0.45, 0.12, null);
+  }
+  // 노를 물에 박아 세울 때: 큰 첨벙 + 블레이드에 물이 부딪히는 '쏴아' 소리(속도에 비례)
+  let brakeSnd = null;
+  function sndBrakeStart(v) {
+    if (!SB || !S.water || !actx) return;
+    const strength = smooth(v / 3.5);
+    playAt(pick(SB.hard, "bL"), -0.7, 0.5 + 0.5 * strength, 0, 0.9);
+    playAt(pick(SB.hard, "bR"), 0.7, 0.5 + 0.45 * strength, 0.015, 0.92);
+    if (brakeSnd) return;
+    const src = actx.createBufferSource(); src.buffer = SB.rush; src.loop = true; src.playbackRate.value = 1.25;
+    const bp = actx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 900; bp.Q.value = 0.6;
+    const g = actx.createGain(); g.gain.value = 0;
+    src.connect(bp); bp.connect(g); g.connect(master); src.start(0, Math.random() * SB.rush.duration);
+    brakeSnd = { src, g, bp };
+  }
+  function updateBrakeSound() {
+    if (!brakeSnd || !actx) return;
+    const t = actx.currentTime, on = S.phase === "brake";
+    const lvl = on ? 1.6 * smooth(S.v / 3) * S.brake : 0;
+    brakeSnd.g.gain.setTargetAtTime(lvl, t, on ? 0.05 : 0.25);
+    brakeSnd.src.playbackRate.setTargetAtTime(0.9 + 0.5 * smooth(S.v / 4), t, 0.1);
+    brakeSnd.bp.frequency.setTargetAtTime(500 + 900 * smooth(S.v / 4), t, 0.1);
+    if (!on && S.phaseT > 1.2) { try { brakeSnd.src.stop(); } catch (e) {} brakeSnd = null; }
   }
   function applySound() {
     const vid = video();
@@ -471,7 +495,7 @@
 
   // ---------- 노 동작 ----------
   // 단계: recovery(물 밖, 눕힘) → 캐치 직전 세우기 → drive(물속) → finish(빼기) → recovery
-  let squared = false, dripTimer = 0;
+  let squared = false, dripTimer = 0, brakeFx = 0, foamFx = 0, brakeBuzz = 0;
   function updateOars(dt) {
     // 손 위치 p(0=팔 뻗음, 1=당김) → 노 각도. 손이 앞이면 블레이드도 앞 (앞을 보고 젓는 방식)
     const sweepDeg = (p) => { const d = clamp((0.5 - p) / 0.55, -1, 1); return Math.asin(d) * 180 / Math.PI * 0.78; };  // 약 +62° ~ -48°
@@ -483,6 +507,9 @@
     const target = sweepDeg(S.pf);
     S.phaseT += dt;
     if (S.phase === "drive") S.peakVel = Math.max(S.peakVel, S.vel);
+    // 노 박기(브레이크): 트리거를 당기거나 손을 들어 올리면
+    if (S.phase !== "brake" && S.brake > 0.35 && S.phase !== "drive") setPhase("brake");
+    else if (S.phase === "brake" && S.brake < 0.15) setPhase("recovery");
     // 드라이브 시작: 리커버리 중(0.3초 이상)에만, 앞쪽 절반에서, 몸 쪽으로 분명히 당기기 시작할 때(2프레임 연속)
     if (S.phase === "recovery") {
       S.upFrames = (S.vel > 0.5 && S.pf < 0.55) ? S.upFrames + 1 : 0;
@@ -499,9 +526,12 @@
     if (S.phase === "drive") squared = false;
 
     for (const o of oars) {
-      o.sweep = lerp(o.sweep, target, 1 - Math.exp(-dt * 18));
+      if (S.phase !== "brake") o.sweep = lerp(o.sweep, target, 1 - Math.exp(-dt * 18));
       let hTarget, fTarget;
-      if (S.phase === "drive") { hTarget = -0.06; fTarget = 0; }                 // 물속, 세움
+      if (S.phase === "brake") {                                                  // 세운 채 물에 박음, 노는 옆으로 고정
+        o.sweep = lerp(o.sweep, 8, 1 - Math.exp(-dt * 3));
+        hTarget = -0.07; fTarget = 0;
+      } else if (S.phase === "drive") { hTarget = -0.06; fTarget = 0; }          // 물속, 세움
       else if (S.phase === "finish") { hTarget = 0.10; fTarget = 0; }           // 빼는 중
       else { hTarget = nearCatch ? 0.07 : 0.17; fTarget = nearCatch ? 0 : 1; }  // 물 위, 눕힘 / 입수 직전 세움
       o.height = lerp(o.height, hTarget, 1 - Math.exp(-dt * (S.phase === "drive" ? 22 : 9)));
@@ -510,6 +540,33 @@
       const bladeY = WATER_Y + o.height, dy = bladeY - (PIN_Y + 0.06);
       o.pitch.rotation.z = o.s * Math.atan2(dy, OUTBOARD - 0.2);
       o.feather.rotation.x = -o.s * o.fea * Math.PI / 2 * 0.95;
+    }
+    // 블레이드 앞에 일어나는 흰 물(브레이크 중, 속도에 비례)
+    for (const o of oars) {
+      if (!o.foam) {
+        ensureFx();
+        const T = window.THREE;
+        o.foam = new T.Mesh(new T.PlaneGeometry(1, 1), new T.MeshBasicMaterial({ map: puddleTex, transparent: true, depthWrite: false, opacity: 0, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+        o.foam.rotation.x = -Math.PI / 2; boat.add(o.foam);
+      }
+      const want = S.phase === "brake" ? smooth(S.v / 2.5) * S.brake : 0;
+      o.foam.material.opacity = lerp(o.foam.material.opacity, want, 1 - Math.exp(-dt * 8));
+      if (o.foam.material.opacity > 0.01) {
+        const bp = bladeWorld(o); o.foam.position.set(bp.x, WATER_Y + 0.014, bp.z - 0.08);
+        const sc = 0.35 + 0.45 * smooth(S.v / 3.5); o.foam.scale.set(sc * 1.4, sc, 1); o.foam.rotation.z += dt * 1.5;
+      }
+    }
+    // 브레이크 중: 블레이드에 물이 부딪혀 하얗게 일어남(속도에 비례)
+    if (S.phase === "brake" && S.v > 0.3) {
+      brakeFx -= dt;
+      if (brakeFx <= 0) {
+        brakeFx = 0.05;
+        const n = Math.round(2 + 10 * smooth(S.v / 3.5) * S.brake);
+        for (const o of oars) addSpray(o, 0.4 + 0.6 * smooth(S.v / 3.5), n);
+        foamFx -= 1; if (foamFx <= 0) { foamFx = 3; for (const o of oars) addPuddle(o, 0.4 + 0.6 * smooth(S.v / 3.5)); }
+      }
+      brakeBuzz -= dt;
+      if (brakeBuzz <= 0) { brakeBuzz = 0.12; haptic(0.15 + 0.6 * smooth(S.v / 3.5) * S.brake, 90); }
     }
     if (S.phase === "recovery" && S.phaseT < 0.9) {                       // 노를 든 직후 물방울
       dripTimer -= dt;
@@ -526,9 +583,16 @@
       sndCatch(power);
       for (const o of oars) addSpray(o, power, 6 + Math.round(10 * power));
       haptic(0.35 + 0.4 * power, 40);
+    } else if (ph === "brake") {
+      S.upFrames = 0;
+      sndBrakeStart(S.v);
+      for (const o of oars) addSpray(o, 0.5 + 0.5 * smooth(S.v / 3.5), 8 + Math.round(14 * smooth(S.v / 3.5)));
+      haptic(0.4 + 0.5 * smooth(S.v / 3.5), 80);
     } else if (ph === "finish") {
       S.lastPower = clamp(S.peakVel / 2.6, 0.15, 1);
       for (const o of oars) addPuddle(o, S.lastPower);
+    } else if (ph === "recovery" && prev === "brake") {
+      sndClunk(0.25);                                                     // 노를 물에서 빼며 눕힘
     } else if (ph === "recovery" && prev !== "recovery") {
       if (prev === "drive") S.lastPower = clamp(S.peakVel / 2.6, 0.15, 1);
       sndClunk(0.28); sndDrip();                                          // 블레이드 눕히는 '딸깍' + 물방울
@@ -544,7 +608,7 @@
     rollT += dt;
     const sinceCatch = (performance.now() - S.strokeStart) / 1000;
     const check = Math.exp(-sinceCatch * 7) * 0.006;                 // 캐치 직후 뱃머리가 살짝 숙여짐
-    const lift = S.phase === "drive" ? 0.003 * S.drivePower : 0;
+    const lift = S.phase === "drive" ? 0.003 * S.drivePower : (S.phase === "brake" ? -0.008 * smooth(S.v / 3) * S.brake : 0);
     boat.rotation.x = lerp(boat.rotation.x, -check + lift, 1 - Math.exp(-dt * 6));
     boat.rotation.z = 0.004 * Math.sin(rollT * 0.9) + 0.002 * Math.sin(rollT * 2.3);   // 균형 잡는 미세한 흔들림
     boat.position.y = 0.004 * Math.sin(rollT * 1.7) * smooth(S.vSmooth / 2);
@@ -651,7 +715,7 @@
     readControllers(frame, now);
     step(now);
     const dt = Math.min(0.05, (now - (onXRFrame.last || now)) / 1000); onXRFrame.last = now;
-    updateOars(dt); updateFx(dt); updateBoatMotion(dt); drawCoach(now); updateLight(now); updateLoops();
+    updateOars(dt); updateFx(dt); updateBoatMotion(dt); drawCoach(now); updateLight(now); updateLoops(); updateBrakeSound();
     uploadVideo();
     renderer.render(scene, camera);
   }
@@ -659,26 +723,35 @@
   function readControllers(frame, now) {
     const ref = renderer.xr.getReferenceSpace();
     const yaw = S.yaw || 0, fx = -Math.sin(yaw), fz = -Math.cos(yaw);
-    let sum = 0, n = 0, aNow = false, gi = 0; padsNow = [];
+    let sum = 0, n = 0, aNow = false, gi = 0, ySum = 0, trig = 0; padsNow = [];
     for (const src of session.inputSources) {
       const gp = src.gamepad;
       if (gp) {
         if (gp.buttons[1] && gp.buttons[1].pressed) S.yaw = null;
         if (src.handedness === "right" && gp.buttons[4] && gp.buttons[4].pressed) aNow = true;
         padsNow.push(gp);
+        if (gp.buttons[0]) trig = Math.max(trig, gp.buttons[0].value || (gp.buttons[0].pressed ? 1 : 0));
       }
       if (!src.gripSpace) continue;
       const pose = frame.getPose(src.gripSpace, ref);
       if (!pose) continue;
       const c = pose.transform.position;
-      sum += (c.x - headPos.x) * fx + (c.z - headPos.z) * fz; n++;
+      sum += (c.x - headPos.x) * fx + (c.z - headPos.z) * fz; n++; ySum += c.y;
       if (grips[gi]) { grips[gi].visible = true; grips[gi].position.set(c.x, c.y, c.z); grips[gi].rotation.set(0, yaw, Math.PI / 2); gi++; }
     }
     for (; gi < grips.length; gi++) grips[gi].visible = false;
     if (aNow && !aPrev) { S.mode = S.mode === "smooth" ? "instant" : "smooth"; paintMode(); save(); }
     aPrev = aNow;
     S.hands = n;
-    if (!n || S.yaw === null) return;
+    S.trig = trig;
+    if (!n || S.yaw === null) { S.brake = trig; return; }
+    // 손 높이: 평소 젓는 높이(기준)보다 6cm 이상 들어 올리고 손을 멈추면 노 박기
+    const hy = ySum / n, dtb = Math.min(0.05, (now - (readControllers.tb || now)) / 1000); readControllers.tb = now;
+    if (S.handBase === null) S.handBase = hy;
+    if (S.phase !== "brake") S.handBase = lerp(S.handBase, hy, 1 - Math.exp(-dtb * 0.4));
+    S.handY = hy;
+    const raise = (S.vel > -0.4 && S.vel < 0.4) ? smooth((hy - S.handBase - 0.06) / 0.07) : 0;
+    S.brake = Math.max(trig, raise);
     const d = sum / n, dt = Math.min(0.05, (now - (readControllers.t || now)) / 1000); readControllers.t = now;
     S.dMax = Math.max(d, S.dMax - 0.015 * dt);
     S.dMin = Math.min(d, S.dMin + 0.015 * dt);
@@ -701,14 +774,16 @@
     const hv = (S.p - S.pPrev) / Math.max(dt, 1e-3);
     S.hv = lerp(S.hv, hv, 1 - Math.exp(-dt * 25));
     let a = -C_DRAG * S.v * Math.abs(S.v) - C_LIN * S.v;
-    if (hv > 0.05) a += K_DRIVE * S.power * Math.min(hv, 6) ** 2;
+    if (S.phase === "brake") a -= S.brake * (1.0 * S.v + 0.10 * S.v * S.v);   // 노를 박으면 1~2초 안에 섬
+    if (hv > 0.05 && S.phase !== "brake") a += K_DRIVE * S.power * Math.min(hv, 6) ** 2;
     S.v = Math.max(0, S.v + a * dt); S.dist += S.v * dt;
     if (S.p > 0.75) S.peak = true;
     if (S.peak && S.p < 0.15) { S.peak = false; S.strokes.push(now); if (S.strokes.length > 4) S.strokes.shift(); }
     S.pPrev = S.p;
     const st = S.strokes;
     S.spm = st.length >= 2 && now - st[st.length - 1] < 6000 ? 60000 * (st.length - 1) / (st[st.length - 1] - st[0]) : 0;
-    S.vSmooth += (S.v - S.vSmooth) * (1 - Math.exp(-dt / S.tau));
+    const tauEff = S.phase === "brake" ? Math.min(S.tau, 0.35) : S.tau;      // 브레이크는 영상에도 바로 반영
+    S.vSmooth += (S.v - S.vSmooth) * (1 - Math.exp(-dt / tauEff));
     S.rate = Math.min(2, (S.mode === "smooth" ? S.vSmooth : S.v) / S.vRef);
 
     const vid = video();
@@ -745,7 +820,9 @@
       (host || document.body).appendChild(renderer.domElement);
       return {
         renderer, scene, camera, S,
-        step(dt, p) { S.pPrev = S.p; S.p = p; S.hv = (S.p - S.pPrev) / dt; S.v = Math.max(S.v, 3); S.vSmooth = 3; updateOars(dt); updateFx(dt); updateBoatMotion(dt); drawCoach(performance.now() + 1000 * Math.random()); },
+        brake(b) { S.brake = b; },
+        phys(dt) { const now = performance.now(); S.last = now - dt * 1000; step(now); },
+        step(dt, p) { S.pPrev = S.p; S.p = p; S.hv = (S.p - S.pPrev) / dt; if (S.phase !== "brake") { S.v = Math.max(S.v, 3); S.vSmooth = 3; } updateOars(dt); updateFx(dt); updateBoatMotion(dt); drawCoach(performance.now() + 1000 * Math.random()); },
         render() { renderer.render(scene, camera); },
         counts() { return { puddles: puddles.length, spray: spray.length, drops: drops.length, phase: S.phase, puddleZ: puddles.map(m => +m.position.z.toFixed(2)), puddleOp: puddles.map(m => +m.material.opacity.toFixed(2)) }; },
       };
