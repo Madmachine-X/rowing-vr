@@ -69,7 +69,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   <div class="group">
     <div class="lab">영상</div>
     <div class="seg two">
-      <label class="filebtn">파일 고르기<input id="fileIn" type="file" accept="video/*"></label>
+      <label class="filebtn">파일 고르기<input id="fileIn" type="file" accept="video/mp4,video/*,.mp4"></label>
       <button id="defBtn">river.mp4 불러오기</button>
     </div>
     <div class="note" id="vidNote">이 파일과 같은 폴더에 있는 river.mp4를 자동으로 불러옵니다.</div>
@@ -201,7 +201,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
     setReady(`영상 준비됨 · ${video.videoWidth}×${video.videoHeight}`);
   });
   video.addEventListener("error", () => {
-    setStatus("영상을 불러오지 못했습니다. 같은 폴더에 river.mp4가 있는지, 또는 '파일 고르기'로 MP4 파일을 골라 주세요.", true);
+    setStatus("영상을 재생하지 못했습니다" + (video.error ? " (오류 " + video.error.code + ")" : "") + ". '파일 고르기'로 river_quest.mp4를 다시 골라 주세요.", true);
   });
   function loadVideo(src, label) {
     video.src = src; video.load();
@@ -512,7 +512,10 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
   checkXR();
   // 같은 폴더에 river.mp4가 있으면 자동으로 (PC 연결 방식). 인터넷 주소로 열면 '파일 고르기'로 Quest에 저장된 영상을 고름
   if (location.hostname === "localhost" || location.hostname === "127.0.0.1" || location.protocol === "file:") loadVideo("river.mp4", "river.mp4");
-  else $("vidNote").textContent = "'파일 고르기'를 눌러 Quest에 저장해 둔 영상을 골라 주세요.";
+  else {
+    $("defBtn").hidden = true;
+    $("vidNote").textContent = "'파일 고르기' → Download 폴더에서 river_quest.mp4를 골라 주세요. 목록에 없으면 선택 창에서 '파일' 또는 '찾아보기'로 Download 폴더를 직접 열어 보세요.";
+  }
 })();
 </script>
 <script>
