@@ -1,12 +1,17 @@
-// 앱 설치용 최소 서비스 워커: 페이지를 늘 최신으로 받고, 오프라인일 때만 저장본을 씀
-const CACHE = "rowing-vr-v14";
-self.addEventListener("install", e => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c => c.addAll(["./", "./yt.html"]))); });
-self.addEventListener("activate", e => e.waitUntil(self.clients.claim()));
+// 설치형 앱용 서비스 워커: 늘 최신을 먼저 받고, 인터넷이 없으면 저장본으로 실행
+const CACHE = "rowing-vr-v15";
+const SHELL = ["./", "index.html", "yt.html", "three-r128.min.js", "yt-sounds.js", "yt-row.js",
+               "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png"];
+self.addEventListener("install", e => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); });
+self.addEventListener("activate", e => e.waitUntil((async () => {
+  for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
+  await self.clients.claim();
+})()));
 self.addEventListener("fetch", e => {
   const req = e.request;
   if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
   e.respondWith(fetch(req).then(res => {
-    if (res.ok && (req.mode === "navigate")) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
+    if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
     return res;
-  }).catch(() => caches.match(req)));
+  }).catch(async () => (await caches.match(req, { ignoreSearch: true })) || (req.mode === "navigate" ? caches.match("index.html") : Response.error())));
 });

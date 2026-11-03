@@ -33,6 +33,7 @@
   // 패널
   // ======================================================================
   const el = (tag, css, text) => { const e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; };
+  const APP = document.getElementById("rowvr-panel-host");      // 설치형 앱 화면이면 그 자리에 패널을 넣음
   const panel = el("div", "position:fixed;right:16px;bottom:16px;z-index:2147483647;width:320px;max-height:calc(100vh - 32px);overflow-y:auto;background:#151c20;color:#e6ecee;border:1px solid #f2a33a;border-radius:12px;padding:14px;font:14px/1.5 system-ui,'Malgun Gothic',sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5)");
   panel.appendChild(el("div", "font-weight:700;font-size:15px;margin-bottom:4px;color:#f2a33a", "로잉 VR"));
   const status = el("div", "font-size:13px;color:#8d9ba1;margin-bottom:10px", "");
@@ -54,9 +55,9 @@
     for (const [k, text] of opts) { const b = el("button", btnCss, text); b.onclick = () => { set(k); paint(); save(); }; bs[k] = b; r.appendChild(b); }
     paint(); settings.appendChild(r); return paint;
   };
-  segRow("영상 형식", [["360", "360"], ["360tb", "360 입체"], ["180", "180 입체"]], () => S.format, k => { S.format = k; if (scene) buildVideoMeshes(); });
-  segRow("화질", [["hd1440", "1440p (부드럽게)"], ["hd2160", "4K (선명하게)"]], () => S.quality, k => { S.quality = k; setQuality(); });
-  segRow("소리", [["true", "물소리 (음악 끄기)"], ["false", "유튜브 소리"]], () => S.water, k => { S.water = k === "true"; applySound(); });
+  const paintFormat = segRow("영상 형식", [["360", "360"], ["360tb", "360 입체"], ["180", "180 입체"]], () => S.format, k => { S.format = k; if (scene) buildVideoMeshes(); });
+  if (!document.getElementById("rowvr-panel-host")) segRow("화질", [["hd1440", "1440p (부드럽게)"], ["hd2160", "4K (선명하게)"]], () => S.quality, k => { S.quality = k; setQuality(); });
+  segRow("소리", [["true", "물소리"], ["false", document.getElementById("rowvr-panel-host") ? "영상 원래 소리" : "유튜브 소리"]], () => S.water, k => { S.water = k === "true"; applySound(); });
   const paintMode = segRow("영상 속도 반응 (VR 안에서는 A 버튼)", [["smooth", "부드럽게"], ["instant", "즉각"]], () => S.mode, k => { S.mode = k; });
   const slider = (label, min, max, step, get, set, fmt) => {
     const wrap = el("div", "margin-bottom:6px");
@@ -81,10 +82,18 @@
   setBtn.onclick = () => { const open = settings.style.display === "none"; settings.style.display = open ? "block" : "none"; setBtn.textContent = open ? "설정 닫기 ▴" : "설정 열기 ▾"; };
   const vrBtn = el("button", "width:100%;background:#f2a33a;color:#1a1206;border:0;border-radius:10px;padding:12px;font:700 16px system-ui,sans-serif;cursor:pointer;margin-top:8px", "VR 시작");
   panel.append(setBtn, settings, vrBtn);
-  (document.body || document.documentElement).appendChild(panel);
+  if (APP) {
+    panel.style.cssText = "position:relative;width:100%;background:transparent;color:inherit;border:0;padding:0;box-shadow:none;font:15px/1.5 inherit";
+    panel.firstChild.style.display = "none";                                   // 제목은 앱 화면이 보여줌
+    closeBtn.style.display = "none";
+    APP.appendChild(panel);
+  } else {
+    (document.body || document.documentElement).appendChild(panel);
+  }
   const setStatus = (t) => { status.textContent = t; };
   if (!window.THREE) setStatus("3D 엔진이 없습니다. youtube-rowing.bat으로 실행해 주세요.");
-  else setStatus(navigator.xr ? "영상이 재생되는지 확인한 뒤 'VR 시작'을 누르세요." : "이 브라우저는 VR을 지원하지 않습니다.");
+  else if (!navigator.xr) setStatus("이 브라우저는 VR을 지원하지 않습니다. Quest에서 열어 주세요.");
+  else setStatus(APP ? "영상을 고른 뒤 'VR 시작'을 누르세요." : "영상이 재생되는지 확인한 뒤 'VR 시작'을 누르세요.");
 
   // ======================================================================
   // 화질 고정
@@ -669,7 +678,7 @@
     if (session) { session.end(); return; }
     if (!window.THREE) { setStatus("3D 엔진이 없습니다. youtube-rowing.bat으로 실행해 주세요."); return; }
     const vid = video();
-    if (!vid) { setStatus("유튜브 영상을 찾지 못했습니다. 영상 페이지에서 실행해 주세요."); return; }
+    if (!vid || (APP && !vid.src)) { setStatus(APP ? "먼저 영상을 골라 주세요." : "유튜브 영상을 찾지 못했습니다. 영상 페이지에서 실행해 주세요."); return; }
     initAudio(); if (actx && actx.state === "suspended") actx.resume();
     setQuality();
     try { session = await navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor", "hand-tracking"] }); }
@@ -858,6 +867,8 @@
   const fmtPace = s => { s = Math.min(s, 599); return Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0"); };
 
   const api = window.__rowVR = {
+    setFormat(f) { S.format = f; save(); if (scene) buildVideoMeshes(); paintFormat && paintFormat(); },
+    getState() { return S; },
     toggle() {
       S.on = !S.on;
       panel.style.display = S.on ? "" : "none";

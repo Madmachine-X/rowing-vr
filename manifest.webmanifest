@@ -1,15 +1,30 @@
 {
-  "name": "로잉 VR 테스트",
+  "name": "로잉 VR",
   "short_name": "로잉 VR",
-  "description": "노 젓는 동작에 맞춰 VR 영상이 흘러가는지 확인하는 테스트",
+  "description": "노 젓는 만큼 풍경이 흘러가는 실사 VR 로잉",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#0d1114",
   "theme_color": "#0d1114",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
-  ]
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "id": "./",
+  "orientation": "landscape"
 }
