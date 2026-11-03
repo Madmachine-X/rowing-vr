@@ -1,78 +1,61 @@
-/* 유튜브 로잉 북마크 (자체 VR 화면 방식)
- * youtube.com 영상 페이지에서 실행 → 패널의 "VR 시작"을 누르면
- * 이 페이지의 유튜브 영상을 헤드셋 전체 화면(구면)에 띄우고,
- * 컨트롤러를 핸들처럼 당기는 동작에 맞춰 재생 속도를 바꾼다.
- * 영상은 내려받지 않는다. 개인 테스트용.
+/* 유튜브 로잉 VR (youtube-rowing.bat이 주입)
+ * - 이 페이지의 유튜브 영상을 헤드셋 전체 화면(구면)에 띄움 (360 / 360 상하입체 / 180 좌우입체)
+ * - 싱글 스컬 선체, 리거, 노(캐치·드라이브·피니시·페더링), 물 위 노 자국, 뱃머리 물살
+ * - 컨트롤러를 핸들처럼 당기는 동작 → 배 속도 → 영상 재생 속도
+ * - 소리: 실제 녹음(노 첨벙·노받이·물방울, 속도별 물소리 3겹), 좌우 입체음
+ * 필요: window.THREE (r128). 영상은 내려받지 않는다. 개인 테스트용.
  */
 (() => {
   "use strict";
   if (window.__rowVR) { window.__rowVR.toggle(); return; }
 
+  // ======================================================================
+  // 상태
+  // ======================================================================
   const S = {
     on: true, mode: "smooth", tau: 3, vRef: 11 / 3.6, power: 1, format: "360", quality: "hd1440", water: true,
-    p: 0, pPrev: 0, v: 0, vSmooth: 0, rate: 0, dist: 0,
-    peak: false, strokes: [], spm: 0,
-    dMax: 0.55, dMin: 0.22, yaw: null, recenter: false,
+    p: 0, pPrev: 0, hv: 0, v: 0, vSmooth: 0, rate: 0, dist: 0,
+    peak: false, strokes: [], spm: 0, strokeStart: 0,
+    phase: "recovery", phaseT: 0, drivePower: 0,
+    dMax: 0.55, dMin: 0.22, yaw: null,
     xr: false, hands: 0, last: performance.now(),
   };
-  try { Object.assign(S, JSON.parse(localStorage.getItem("rowvr.yt2") || "{}")); } catch (e) {}
-  const save = () => { try { localStorage.setItem("rowvr.yt2", JSON.stringify({ mode: S.mode, tau: S.tau, vRef: S.vRef, power: S.power, format: S.format, quality: S.quality, water: S.water })); } catch (e) {} };
+  try { Object.assign(S, JSON.parse(localStorage.getItem("rowvr.yt3") || "{}")); } catch (e) {}
+  const save = () => { try { localStorage.setItem("rowvr.yt3", JSON.stringify({ mode: S.mode, tau: S.tau, vRef: S.vRef, power: S.power, format: S.format, quality: S.quality, water: S.water })); } catch (e) {} };
   const video = () => document.querySelector("video.html5-main-video") || document.querySelector("video");
+  const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+  const smooth = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
+  const lerp = (a, b, t) => a + (b - a) * t;
 
-  // ---------- 패널 ----------
+  // ======================================================================
+  // 패널
+  // ======================================================================
   const el = (tag, css, text) => { const e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; };
   const panel = el("div", "position:fixed;right:16px;bottom:16px;z-index:2147483647;width:320px;max-height:calc(100vh - 32px);overflow-y:auto;background:#151c20;color:#e6ecee;border:1px solid #f2a33a;border-radius:12px;padding:14px;font:14px/1.5 system-ui,'Malgun Gothic',sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.5)");
   panel.appendChild(el("div", "font-weight:700;font-size:15px;margin-bottom:4px;color:#f2a33a", "로잉 VR"));
   const status = el("div", "font-size:13px;color:#8d9ba1;margin-bottom:10px", "");
   panel.appendChild(status);
-
   const btnCss = "background:#2a3338;color:#e6ecee;border:1px solid #3d4a51;border-radius:8px;padding:8px 10px;font:500 13px system-ui,sans-serif;cursor:pointer";
   const onCss = ";background:rgba(242,163,58,.25);border-color:#f2a33a";
-  const vrBtn = el("button", "width:100%;background:#f2a33a;color:#1a1206;border:0;border-radius:10px;padding:12px;font:700 16px system-ui,sans-serif;cursor:pointer;margin-bottom:10px", "VR 시작");
-  // 접는 설정 영역
-  const settings = el("div", "display:none;border-top:1px solid #3d4a51;padding-top:10px;margin-top:4px");
-  const realAppend = panel.appendChild.bind(panel);
-  panel.appendChild = (n) => settings.appendChild(n);   // 아래 설정 항목들은 접는 영역으로
-
-  panel.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin-bottom:4px", "영상 형식"));
-  const fmtRow = el("div", "display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px");
-  const fmts = [["360", "360"], ["360tb", "360 입체"], ["180", "180 입체"]];
-  const fmtBtns = {};
-  for (const [k, label] of fmts) {
-    const b = el("button", btnCss, label);
-    b.onclick = () => { S.format = k; paintFmt(); save(); };
-    fmtBtns[k] = b; fmtRow.appendChild(b);
-  }
-  const paintFmt = () => { for (const [k, b] of Object.entries(fmtBtns)) b.style.cssText = btnCss + (k === S.format ? onCss : ""); };
-  paintFmt();
-  panel.appendChild(fmtRow);
-
-  const toggleRow = (label, opts, get, set) => {
-    panel.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin-bottom:4px", label));
-    const r = el("div", "display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px");
-    const bs = {};
-    const paint = () => { for (const [k, b] of Object.entries(bs)) b.style.cssText = btnCss + (String(get()) === k ? onCss : ""); };
-    for (const [k, text] of opts) { const b = el("button", btnCss, text); b.onclick = () => { set(k); paint(); save(); }; bs[k] = b; r.appendChild(b); }
-    paint(); panel.appendChild(r);
-  };
-  toggleRow("화질", [["hd1440", "1440p (부드럽게)"], ["hd2160", "4K (선명하게)"]], () => S.quality, k => { S.quality = k; setQuality(); });
-  toggleRow("소리", [["true", "물소리 (음악 끄기)"], ["false", "유튜브 소리"]], () => S.water, k => { S.water = k === "true"; applySound(); });
 
   const stats = el("div", "display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font:600 18px ui-monospace,Consolas,monospace;margin-bottom:10px");
   const mkStat = (k) => { const w = el("div"); w.appendChild(el("div", "font:400 11px system-ui,sans-serif;color:#8d9ba1", k)); const v = el("div", "", "-"); w.appendChild(v); stats.appendChild(w); return v; };
   const sPace = mkStat("페이스/500m"), sSpm = mkStat("spm"), sRate = mkStat("배속");
-  realAppend(stats);
+  panel.appendChild(stats);
 
-  const row = el("div", "display:flex;gap:6px;margin-bottom:8px");
-  const modeBtn = el("button", btnCss, "");
-  const setModeText = () => { modeBtn.textContent = S.mode === "smooth" ? "반응: 부드럽게" : "반응: 즉각"; };
-  modeBtn.onclick = () => { S.mode = S.mode === "smooth" ? "instant" : "smooth"; setModeText(); save(); };
-  setModeText();
-  const offBtn = el("button", btnCss, "닫기");
-  offBtn.onclick = () => api.toggle();
-  row.append(modeBtn, offBtn);
-  panel.appendChild(row);
-
+  const settings = el("div", "display:none;border-top:1px solid #3d4a51;padding-top:10px;margin-top:4px");
+  const segRow = (label, opts, get, set) => {
+    settings.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin-bottom:4px", label));
+    const r = el("div", `display:grid;grid-template-columns:repeat(${opts.length},1fr);gap:6px;margin-bottom:10px`);
+    const bs = {};
+    const paint = () => { for (const [k, b] of Object.entries(bs)) b.style.cssText = btnCss + (String(get()) === k ? onCss : ""); };
+    for (const [k, text] of opts) { const b = el("button", btnCss, text); b.onclick = () => { set(k); paint(); save(); }; bs[k] = b; r.appendChild(b); }
+    paint(); settings.appendChild(r); return paint;
+  };
+  segRow("영상 형식", [["360", "360"], ["360tb", "360 입체"], ["180", "180 입체"]], () => S.format, k => { S.format = k; if (scene) buildVideoMeshes(); });
+  segRow("화질", [["hd1440", "1440p (부드럽게)"], ["hd2160", "4K (선명하게)"]], () => S.quality, k => { S.quality = k; setQuality(); });
+  segRow("소리", [["true", "물소리 (음악 끄기)"], ["false", "유튜브 소리"]], () => S.water, k => { S.water = k === "true"; applySound(); });
+  const paintMode = segRow("영상 속도 반응 (VR 안에서는 A 버튼)", [["smooth", "부드럽게"], ["instant", "즉각"]], () => S.mode, k => { S.mode = k; });
   const slider = (label, min, max, step, get, set, fmt) => {
     const wrap = el("div", "margin-bottom:6px");
     const top = el("div", "display:flex;justify-content:space-between;font-size:12px;color:#8d9ba1");
@@ -81,25 +64,29 @@
     const r = el("input", "width:100%;accent-color:#f2a33a");
     r.type = "range"; r.min = min; r.max = max; r.step = step; r.value = get();
     r.oninput = () => { set(+r.value); val.textContent = fmt(+r.value); save(); };
-    wrap.append(top, r); panel.appendChild(wrap);
+    wrap.append(top, r); settings.appendChild(wrap);
   };
   slider("촬영 당시 배 속도", 3, 25, 1, () => Math.round(S.vRef * 3.6), v => S.vRef = v / 3.6, v => v + " km/h");
   slider("부드러움", 0.5, 8, 0.5, () => S.tau, v => S.tau = v, v => v.toFixed(1) + "초");
   slider("당기는 힘", 0.3, 3, 0.1, () => S.power, v => S.power = v, v => v.toFixed(1) + "×");
-  panel.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin-top:6px",
-    "VR 안에서: 컨트롤러를 핸들처럼 모아 쥐고 팔을 뻗었다가 몸 쪽으로 당기세요. 당길 때마다 짧게 진동합니다. 그립 버튼 = 정면 다시 맞추기, A 버튼 = 반응 방식 전환, 메타 버튼 = 종료."));
-  panel.appendChild = realAppend;
+  settings.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin:6px 0 8px",
+    "VR 안에서: 컨트롤러를 핸들처럼 모아 쥐고 팔을 뻗었다가 몸 쪽으로 당기세요. 그립 버튼 = 정면 다시 맞추기, A 버튼 = 반응 방식, 메타 버튼 = 종료."));
+  const closeBtn = el("button", btnCss + ";width:100%", "패널 닫기");
+  closeBtn.onclick = () => api.toggle();
+  settings.appendChild(closeBtn);
+
   const setBtn = el("button", btnCss + ";width:100%;margin-bottom:8px", "설정 열기 ▾");
   setBtn.onclick = () => { const open = settings.style.display === "none"; settings.style.display = open ? "block" : "none"; setBtn.textContent = open ? "설정 닫기 ▴" : "설정 열기 ▾"; };
-  realAppend(setBtn);
-  realAppend(settings);
-  realAppend(vrBtn);
-  vrBtn.style.marginBottom = "0"; vrBtn.style.marginTop = "8px";
+  const vrBtn = el("button", "width:100%;background:#f2a33a;color:#1a1206;border:0;border-radius:10px;padding:12px;font:700 16px system-ui,sans-serif;cursor:pointer;margin-top:8px", "VR 시작");
+  panel.append(setBtn, settings, vrBtn);
   (document.body || document.documentElement).appendChild(panel);
   const setStatus = (t) => { status.textContent = t; };
-  setStatus(navigator.xr ? "유튜브 영상이 재생되는지 확인한 뒤 'VR 시작'을 누르세요." : "이 브라우저는 VR을 지원하지 않습니다.");
+  if (!window.THREE) setStatus("3D 엔진이 없습니다. youtube-rowing.bat으로 실행해 주세요.");
+  else setStatus(navigator.xr ? "영상이 재생되는지 확인한 뒤 'VR 시작'을 누르세요." : "이 브라우저는 VR을 지원하지 않습니다.");
 
-  // ---------- 화질 고정 ----------
+  // ======================================================================
+  // 화질 고정
+  // ======================================================================
   function setQuality() {
     const mp = document.getElementById("movie_player");
     try { if (mp && mp.setPlaybackQualityRange) mp.setPlaybackQualityRange(S.quality, S.quality); } catch (e) {}
@@ -107,224 +94,586 @@
   }
   setQuality();
 
-  // ---------- 소리: 유튜브 음악 대신 실제 녹음된 물소리 ----------
-  // 녹음: Pixabay(freesound_community) "Paddles rowing on a calm water stream",
-  //       "Water under boat gurgling waves Manitoulin 05" — Pixabay Content License
-  let actx = null, strokeBufs = [], ambBuf = null, ambGain = null, ambSrc = null, soundsLoading = false;
+  // ======================================================================
+  // 소리 (실제 녹음 — Pixabay, Pixabay Content License)
+  // ======================================================================
+  let actx = null, master = null, SB = null, loops = null, soundsLoading = false;
   function initAudio() {
     if (actx) return;
     try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; return; }
+    master = actx.createGain(); master.gain.value = 0.9; master.connect(actx.destination);
     loadSounds();
   }
   async function loadSounds() {
     if (soundsLoading || !actx) return; soundsLoading = true;
     let data = window.__rowSounds;
     if (!data) { try { data = await (await fetch("https://madmachine-x.github.io/rowing-vr/sounds.json")).json(); } catch (e) { data = null; } }
-    if (!data) { soundsLoading = false; return; }
+    if (!data || !data.soft) { soundsLoading = false; return; }
     const dec = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return actx.decodeAudioData(u.buffer); };
     try {
-      strokeBufs = await Promise.all(data.strokes.map(dec));
-      ambBuf = await dec(data.amb);
-      if (S.xr && S.water) startAmbience();
-    } catch (e) {}
+      const all = (arr) => Promise.all(arr.map(dec));
+      SB = { soft: await all(data.soft), hard: await all(data.hard), clunk: await all(data.clunk), drip: await all(data.drip),
+             lap: await dec(data.lap), glide: await dec(data.glide), rush: await dec(data.rush) };
+      if (S.xr && S.water) startLoops();
+    } catch (e) { SB = null; }
   }
-  function startAmbience() {
-    if (!actx || !ambBuf || ambSrc) return;
-    ambSrc = actx.createBufferSource(); ambSrc.buffer = ambBuf; ambSrc.loop = true;
-    ambGain = actx.createGain(); ambGain.gain.value = 0.25;
-    ambSrc.connect(ambGain); ambGain.connect(actx.destination); ambSrc.start();
+  function startLoops() {
+    if (!actx || !SB || loops) return;
+    const mk = (buf, g0) => {
+      const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+      const g = actx.createGain(); g.gain.value = g0;
+      src.connect(g); g.connect(master); src.start(0, Math.random() * buf.duration);
+      return { src, g };
+    };
+    loops = { lap: mk(SB.lap, 0.6), glide: mk(SB.glide, 0.0), rush: mk(SB.rush, 0.0) };
   }
-  function stopAmbience() { try { if (ambSrc) ambSrc.stop(); } catch (e) {} ambSrc = null; ambGain = null; }
-  let lastStroke = -1;
-  function splashSound(vol) {
-    if (!actx || !S.water || !strokeBufs.length) return;
-    let i = Math.floor(Math.random() * strokeBufs.length);
-    if (i === lastStroke) i = (i + 1) % strokeBufs.length; lastStroke = i;   // 같은 소리 연속 방지
-    const src = actx.createBufferSource(); src.buffer = strokeBufs[i];
-    src.playbackRate.value = 0.96 + Math.random() * 0.08;                  // 매번 살짝 다르게
+  function stopLoops() { if (!loops) return; for (const k in loops) { try { loops[k].src.stop(); } catch (e) {} } loops = null; }
+  function updateLoops() {
+    if (!loops || !actx) return;
+    const v = S.vSmooth, t = actx.currentTime;
+    // 멈춤: 잔잔한 물결 / 활주: 배 밑 물소리 / 빠름: 물살
+    const lap = 0.55 * (1 - smooth(v / 1.8)) + 0.12;
+    const glide = 0.9 * smooth(v / 1.6) * (1 - 0.35 * smooth((v - 3) / 1.5));
+    const rush = 0.8 * smooth((v - 2.2) / 2);
+    loops.lap.g.gain.setTargetAtTime(lap, t, 0.35);
+    loops.glide.g.gain.setTargetAtTime(glide, t, 0.35);
+    loops.rush.g.gain.setTargetAtTime(rush, t, 0.35);
+    loops.glide.src.playbackRate.setTargetAtTime(0.92 + 0.18 * smooth(v / 4.5), t, 0.5);
+    // 드라이브 중 배가 밀릴 때 물소리가 살짝 커짐
+    const surge = S.phase === "drive" ? 0.18 * S.drivePower : 0;
+    master.gain.setTargetAtTime(0.85 + surge, t, 0.12);
+  }
+  const lastPick = {};
+  function pick(pool, key) {
+    let i = Math.floor(Math.random() * pool.length);
+    if (pool.length > 1 && i === lastPick[key]) i = (i + 1) % pool.length;
+    lastPick[key] = i; return pool[i];
+  }
+  // 좌우 노 위치에서 나는 소리 (왼쪽 노는 왼쪽 귀, 오른쪽 노는 오른쪽 귀)
+  function playAt(buf, pan, vol, delay, rate) {
+    if (!actx || !buf) return;
+    const src = actx.createBufferSource(); src.buffer = buf;
+    src.playbackRate.value = rate || (0.96 + Math.random() * 0.08);
     const g = actx.createGain(); g.gain.value = vol;
-    src.connect(g); g.connect(actx.destination); src.start();
+    let node = g;
+    if (actx.createStereoPanner) { const p = actx.createStereoPanner(); p.pan.value = pan; g.connect(p); node = p; }
+    src.connect(g); node.connect(master); src.start(actx.currentTime + (delay || 0));
+  }
+  function sndCatch(power) {
+    if (!SB || !S.water) return;
+    const hard = power > 0.55, pool = hard ? SB.hard : SB.soft, key = hard ? "hard" : "soft";
+    const vol = 0.55 + 0.45 * power;
+    playAt(pick(pool, key + "L"), -0.65, vol, 0, null);
+    playAt(pick(pool, key + "R"), 0.65, vol * 0.92, 0.012 + Math.random() * 0.02, null);   // 두 노가 아주 살짝 어긋나게
+  }
+  function sndClunk(vol) {
+    if (!SB || !S.water) return;
+    playAt(pick(SB.clunk, "cL"), -0.8, vol, 0, 0.97 + Math.random() * 0.06);
+    playAt(pick(SB.clunk, "cR"), 0.8, vol * 0.9, 0.02 + Math.random() * 0.03, 0.97 + Math.random() * 0.06);
+  }
+  function sndDrip() {
+    if (!SB || !S.water) return;
+    playAt(pick(SB.drip, "dL"), -0.75, 0.5, 0.05, null);
+    playAt(pick(SB.drip, "dR"), 0.75, 0.45, 0.12, null);
   }
   function applySound() {
     const vid = video();
-    if (S.xr && S.water) { if (vid) vid.muted = true; startAmbience(); }
-    else { if (vid) vid.muted = false; stopAmbience(); }
+    if (S.xr && S.water) { if (vid) vid.muted = true; startLoops(); }
+    else { if (vid) vid.muted = false; stopLoops(); }
   }
 
-  // ---------- WebGL: 영상 구면 그리기 ----------
-  let gl = null, prog = null, tex = null, buf = null, loc = {}, lastVideoTime = -1, texOK = true;
-  const VS = "attribute vec2 p; varying vec2 v; void main(){ v=p; gl_Position=vec4(p,0.0,1.0); }";
-  const FS = [
-    "precision highp float;",
-    "varying vec2 v;",
-    "uniform mat4 invVP;",          // (투영*시선회전)의 역행렬
-    "uniform sampler2D tex;",
-    "uniform int fmt;",             // 0=360, 1=360 상하입체, 2=180 좌우입체
-    "uniform int eye;",             // 0=왼쪽, 1=오른쪽
-    "uniform float yaw;",
-    "void main(){",
-    "  vec4 w = invVP * vec4(v, 1.0, 1.0);",
-    "  vec3 d = normalize(w.xyz / w.w);",
-    "  float c = cos(yaw), s = sin(yaw);",
-    "  d = vec3(c*d.x - s*d.z, d.y, s*d.x + c*d.z);",     // 정면 맞추기
-    "  float lon = atan(d.x, -d.z);",                      // 정면=0, 오른쪽=+
-    "  float lat = asin(clamp(d.y, -1.0, 1.0));",
-    "  vec2 uv; ",
-    "  if (fmt == 2) {",
-    "    if (abs(lon) > 1.5708) { gl_FragColor = vec4(0.0,0.0,0.0,1.0); return; }",
-    "    uv = vec2((lon / 3.14159265 + 0.5) * 0.5 + (eye == 1 ? 0.5 : 0.0), 0.5 - lat / 3.14159265);",
-    "  } else {",
-    "    uv = vec2(lon / 6.2831853 + 0.5, 0.5 - lat / 3.14159265);",
-    "    if (fmt == 1) uv.y = uv.y * 0.5 + (eye == 1 ? 0.5 : 0.0);",
-    "  }",
-    "  gl_FragColor = texture2D(tex, uv);",
-    "}",
-  ].join("\n");
+  // ======================================================================
+  // 3D 장면
+  // ======================================================================
+  let renderer = null, scene = null, camera = null, worldGroup = null, videoGroup = null, boat = null;
+  let vtex = null, texOK = true, lastVideoTime = -1, hemi = null, sun = null;
+  const WATER_Y = -0.92;          // 눈높이 기준 수면 높이
+  const PIN_Y = -0.62, PIN_X = 0.80, PIN_Z = -0.05;
+  const OUTBOARD = 1.98;          // 노받이~블레이드 끝
+  const oars = [], puddles = [], drops = [], spray = [], grips = [];
+  let wake = null, coachTex = null, coachCtx = null;
 
-  function initGL(canvas) {
-    gl = canvas.getContext("webgl", { xrCompatible: true, antialias: false });
-    const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
-    prog = gl.createProgram();
-    gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
-    gl.linkProgram(prog);
-    buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-    for (const n of ["invVP", "tex", "fmt", "eye", "yaw"]) loc[n] = gl.getUniformLocation(prog, n);
-    loc.p = gl.getAttribLocation(prog, "p");
-    tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+  function initScene() {
+    const T = window.THREE;
+    renderer = new T.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(1);
+    renderer.xr.enabled = true;
+    renderer.xr.setReferenceSpaceType("local");
+    if (renderer.outputEncoding !== undefined) renderer.outputEncoding = T.sRGBEncoding;
+    scene = new T.Scene();
+    camera = new T.PerspectiveCamera(80, 1, 0.03, 500);
+    worldGroup = new T.Group(); scene.add(worldGroup);
+    videoGroup = new T.Group(); scene.add(videoGroup);
+    hemi = new T.HemisphereLight(0xdfe9f3, 0x46524a, 1.25); scene.add(hemi);
+    sun = new T.DirectionalLight(0xfff4e0, 1.0); sun.position.set(-2, 6, 3); scene.add(sun);
+
+    vtex = new T.Texture();
+    vtex.minFilter = T.LinearFilter; vtex.magFilter = T.LinearFilter; vtex.generateMipmaps = false;
+    if (vtex.encoding !== undefined) vtex.encoding = T.sRGBEncoding;
+    buildVideoMeshes();
+    buildBoat();
   }
 
+  function editUV(geo, fu, fv) {
+    const uv = geo.attributes.uv;
+    for (let i = 0; i < uv.count; i++) { if (fu) uv.setX(i, fu(uv.getX(i))); if (fv) uv.setY(i, fv(uv.getY(i))); }
+    uv.needsUpdate = true; return geo;
+  }
+  function buildVideoMeshes() {
+    const T = window.THREE;
+    while (videoGroup.children.length) { const m = videoGroup.children.pop(); m.geometry.dispose(); m.material.dispose(); }
+    const mat = () => new T.MeshBasicMaterial({ map: vtex, depthWrite: false, toneMapped: false });
+    const R = 200;
+    if (S.format === "360") {
+      const g = new T.SphereGeometry(R, 96, 64); g.scale(-1, 1, 1);
+      const m = new T.Mesh(g, mat()); m.rotation.y = -Math.PI / 2; m.renderOrder = -10; videoGroup.add(m);
+    } else if (S.format === "360tb") {
+      for (const eye of [1, 2]) {
+        const g = new T.SphereGeometry(R, 96, 64); g.scale(-1, 1, 1);
+        editUV(g, null, v => eye === 1 ? 0.5 + v * 0.5 : v * 0.5);
+        const m = new T.Mesh(g, mat()); m.rotation.y = -Math.PI / 2; m.layers.set(eye); m.renderOrder = -10; videoGroup.add(m);
+      }
+    } else {
+      for (const eye of [1, 2]) {
+        const g = new T.SphereGeometry(R, 64, 64, Math.PI, Math.PI); g.scale(-1, 1, 1);
+        editUV(g, u => u * 0.5 + (eye === 2 ? 0.5 : 0), null);
+        const m = new T.Mesh(g, mat()); m.layers.set(eye); m.renderOrder = -10; videoGroup.add(m);
+      }
+    }
+  }
+
+  // ---------- 싱글 스컬 ----------
+  function hullGeometry(T) {
+    // 길이 방향(z) 단면을 이어 붙인 가늘고 긴 선체. 앞쪽(-z)이 뱃머리.
+    const N = 60, zBow = -4.6, zStern = 2.6;
+    const beamAt = (z) => {            // 반폭(m): 콕핏 부근 0.155, 끝으로 갈수록 뾰족
+      const t = z < -0.2 ? (z - zBow) / (-0.2 - zBow) : 1 - (z + 0.2) / (zStern + 0.2) * 0.85;
+      return 0.155 * Math.pow(clamp(t, 0, 1), 0.62);
+    };
+    const depthAt = (z) => 0.13 * Math.pow(clamp(beamAt(z) / 0.155, 0, 1), 0.8) + 0.01;
+    const M = 14, pos = [], idx = [];
+    for (let i = 0; i <= N; i++) {
+      const z = lerp(zBow, zStern, i / N), b = beamAt(z), d = depthAt(z);
+      for (let j = 0; j <= M; j++) { const a = Math.PI * (j / M); pos.push(Math.cos(a) * b, -Math.sin(a) * d, z); }
+    }
+    for (let i = 0; i < N; i++) for (let j = 0; j < M; j++) { const a = i * (M + 1) + j, b2 = a + M + 1; idx.push(a, b2, a + 1, a + 1, b2, b2 + 1); }
+    const g = new T.BufferGeometry();
+    g.setAttribute("position", new T.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx); g.computeVertexNormals();
+    return { geo: g, beamAt, zBow, zStern };
+  }
+  function deckGeometry(T, beamAt, z0, z1, crown) {
+    const N = 40, M = 6, pos = [], idx = [];
+    for (let i = 0; i <= N; i++) {
+      const z = lerp(z0, z1, i / N), b = beamAt(z);
+      for (let j = 0; j <= M; j++) { const u = j / M * 2 - 1; pos.push(u * b, crown * (1 - u * u) * (b / 0.155), z); }
+    }
+    for (let i = 0; i < N; i++) for (let j = 0; j < M; j++) { const a = i * (M + 1) + j, b2 = a + M + 1; idx.push(a, a + 1, b2, a + 1, b2 + 1, b2); }
+    const g = new T.BufferGeometry(); g.setAttribute("position", new T.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals(); return g;
+  }
+  function bladeGeometry(T) {
+    // 비대칭 '빅 블레이드' 모양 (위가 길고 아래가 짧은 도끼날)
+    const sh = new T.Shape();
+    sh.moveTo(0, 0.02);
+    sh.bezierCurveTo(0.12, 0.09, 0.32, 0.12, 0.47, 0.10);
+    sh.bezierCurveTo(0.50, 0.04, 0.50, -0.06, 0.45, -0.10);
+    sh.bezierCurveTo(0.30, -0.11, 0.12, -0.07, 0, -0.02);
+    sh.lineTo(0, 0.02);
+    const g = new T.ExtrudeGeometry(sh, { depth: 0.012, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.004, bevelSegments: 1, curveSegments: 12 });
+    g.translate(0, 0, -0.006);
+    return g;
+  }
+  function buildBoat() {
+    const T = window.THREE;
+    boat = new T.Group(); worldGroup.add(boat);
+    const DS = T.DoubleSide;
+    const white = new T.MeshStandardMaterial({ color: 0xf3f1ec, roughness: 0.32, metalness: 0.05, side: DS });
+    const carbon = new T.MeshStandardMaterial({ color: 0x1b1e21, roughness: 0.45, metalness: 0.2, side: DS });
+    const accent = new T.MeshStandardMaterial({ color: 0xf2a33a, roughness: 0.4, side: DS });
+    const rubber = new T.MeshStandardMaterial({ color: 0x2b2b2b, roughness: 0.9 });
+
+    // 수면 가림막: 물 아래 부분(선체 바닥, 물에 잠긴 블레이드)은 안 보이게
+    const mask = new T.Mesh(new T.PlaneGeometry(60, 60), new T.MeshBasicMaterial({ colorWrite: false }));
+    mask.rotation.x = -Math.PI / 2; mask.position.y = WATER_Y; mask.renderOrder = -5; boat.add(mask);
+
+    const H = hullGeometry(T);
+    const hull = new T.Mesh(H.geo, white); hull.position.y = WATER_Y + 0.085; boat.add(hull);
+    const hy = hull.position.y;
+    // 앞뒤 갑판 (콕핏 앞은 카본, 뒤는 흰색)
+    const deckF = new T.Mesh(deckGeometry(T, H.beamAt, H.zBow + 0.02, -0.75, 0.018), white); deckF.position.y = hy; boat.add(deckF);
+    const deckR = new T.Mesh(deckGeometry(T, H.beamAt, 0.85, H.zStern - 0.02, 0.018), white); deckR.position.y = hy; boat.add(deckR);
+    // 물막이(스플래시 박스): 콕핏 앞 V자
+    for (const s of [-1, 1]) {
+      const w = new T.Mesh(new T.BoxGeometry(0.008, 0.045, 0.24), carbon);
+      w.position.set(s * 0.06, hy + 0.035, -0.86); w.rotation.y = -s * 0.42; boat.add(w);
+    }
+    // 뱃머리 공 + 가는 줄무늬
+    const ball = new T.Mesh(new T.SphereGeometry(0.022, 16, 12), new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 }));
+    ball.position.set(0, hy + 0.012, H.zBow - 0.005); boat.add(ball);
+    const spine = new T.Mesh(new T.BoxGeometry(0.03, 0.006, 3.6), carbon);
+    spine.position.set(0, hy + 0.019, -2.6); boat.add(spine);
+    for (const s of [-1, 1]) {   // 뱃전 가는 주황 줄
+      const stripe = new T.Mesh(new T.BoxGeometry(0.004, 0.004, 3.4), accent);
+      stripe.position.set(s * 0.05, hy + 0.012, -2.2); stripe.rotation.y = s * 0.018; boat.add(stripe);
+    }
+    // 콕핏 바닥과 발판
+    const pit = new T.Mesh(new T.PlaneGeometry(0.24, 1.6), new T.MeshStandardMaterial({ color: 0x2f3438, roughness: 0.9 }));
+    pit.rotation.x = -Math.PI / 2; pit.position.set(0, hy - 0.02, 0.05); boat.add(pit);
+    const stretcher = new T.Mesh(new T.BoxGeometry(0.26, 0.16, 0.02), carbon);
+    stretcher.position.set(0, hy + 0.04, -0.72); stretcher.rotation.x = -0.7; boat.add(stretcher);
+    for (const s of [-1, 1]) {
+      const shoe = new T.Mesh(new T.BoxGeometry(0.09, 0.07, 0.24), rubber);
+      shoe.position.set(s * 0.06, hy + 0.07, -0.62); shoe.rotation.x = -0.7; boat.add(shoe);
+    }
+    // 스피드코치(발판 위 작은 계기판)
+    const coachCv = document.createElement("canvas"); coachCv.width = 256; coachCv.height = 160;
+    coachCtx = coachCv.getContext("2d"); coachTex = new T.CanvasTexture(coachCv);
+    if (coachTex.encoding !== undefined) coachTex.encoding = T.sRGBEncoding;
+    const coachBody = new T.Mesh(new T.BoxGeometry(0.15, 0.10, 0.03), carbon);
+    coachBody.position.set(0, hy + 0.17, -0.80); coachBody.rotation.x = -0.55; boat.add(coachBody);
+    const coachScreen = new T.Mesh(new T.PlaneGeometry(0.13, 0.08), new T.MeshBasicMaterial({ map: coachTex, toneMapped: false }));
+    coachScreen.position.set(0, 0, 0.016); coachBody.add(coachScreen);
+
+    // 날개형 리거 (선체 → 노받이)
+    for (const s of [-1, 1]) {
+      const curve = new T.CatmullRomCurve3([
+        new T.Vector3(s * 0.14, hy + 0.03, 0.45),
+        new T.Vector3(s * 0.45, PIN_Y - 0.05, 0.20),
+        new T.Vector3(s * PIN_X, PIN_Y - 0.03, PIN_Z),
+        new T.Vector3(s * 0.45, PIN_Y - 0.05, -0.30),
+        new T.Vector3(s * 0.14, hy + 0.03, -0.55),
+      ]);
+      boat.add(new T.Mesh(new T.TubeGeometry(curve, 40, 0.016, 8, false), carbon));
+      const pin = new T.Mesh(new T.CylinderGeometry(0.008, 0.008, 0.16, 8), new T.MeshStandardMaterial({ color: 0xb8bcc0, metalness: 0.8, roughness: 0.3 }));
+      pin.position.set(s * PIN_X, PIN_Y + 0.05, PIN_Z); boat.add(pin);
+      const gate = new T.Mesh(new T.BoxGeometry(0.05, 0.07, 0.06), new T.MeshStandardMaterial({ color: 0x2a2f35, roughness: 0.6 }));
+      gate.position.set(s * PIN_X, PIN_Y + 0.06, PIN_Z); boat.add(gate);
+    }
+
+    // 노: 노받이를 축으로 도는 그룹
+    const bladeGeo = bladeGeometry(T);
+    for (const s of [-1, 1]) {
+      const pivot = new T.Group(); pivot.position.set(s * PIN_X, PIN_Y + 0.06, PIN_Z); boat.add(pivot);
+      const pitch = new T.Group(); pivot.add(pitch);          // 블레이드 높이(위아래)
+      const shaft = new T.Mesh(new T.CylinderGeometry(0.0145, 0.019, OUTBOARD - 0.40, 10), carbon);
+      shaft.rotation.z = Math.PI / 2; shaft.position.x = s * ((OUTBOARD - 0.40) / 2 + 0.02); pitch.add(shaft);
+      const collar = new T.Mesh(new T.CylinderGeometry(0.024, 0.024, 0.07, 10), white);
+      collar.rotation.z = Math.PI / 2; collar.position.x = s * 0.06; pitch.add(collar);
+      const inboard = new T.Mesh(new T.CylinderGeometry(0.016, 0.016, 0.30, 10), carbon);
+      inboard.rotation.z = Math.PI / 2; inboard.position.x = -s * 0.15; pitch.add(inboard);
+      const feather = new T.Group(); feather.position.x = s * (OUTBOARD - 0.42); pitch.add(feather);   // 블레이드 회전축
+      const blade = new T.Mesh(bladeGeo, accent); blade.scale.x = s; feather.add(blade);
+      const bladeTip = new T.Object3D(); bladeTip.position.x = s * 0.30; feather.add(bladeTip);
+      oars.push({ s, pivot, pitch, feather, blade, bladeTip, sweep: 0, height: 0.2, fea: 1 });
+    }
+    // 손잡이(컨트롤러 위치에 표시)
+    for (let i = 0; i < 2; i++) {
+      const g = new T.Mesh(new T.CylinderGeometry(0.017, 0.017, 0.12, 10), rubber); g.visible = false;
+      scene.add(g); grips.push(g);
+    }
+
+    // 뱃머리 물살(V자 흰 물결)
+    const wc = document.createElement("canvas"); wc.width = 128; wc.height = 512;
+    const w = wc.getContext("2d");
+    for (let k = 0; k < 220; k++) {
+      const y = Math.random() * 512, spread = 10 * (1 + y / 160), x = 64 + (Math.random() - 0.5) * spread;
+      w.fillStyle = `rgba(255,255,255,${0.35 * (1 - y / 512)})`; w.fillRect(x, y, 2 + Math.random() * 3, 6 + Math.random() * 14);
+    }
+    const wtex = new T.CanvasTexture(wc);
+    const wmat = new T.MeshBasicMaterial({ map: wtex, transparent: true, depthWrite: false, opacity: 0, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+    wake = new T.Group(); boat.add(wake);
+    for (const s of [-1, 1]) {
+      const m = new T.Mesh(new T.PlaneGeometry(0.22, 3.6), wmat);
+      m.rotation.x = -Math.PI / 2; m.rotation.z = s * 0.20; m.position.set(s * 0.33, WATER_Y + 0.01, H.zBow + 1.8); wake.add(m);
+    }
+    wake.userData.mat = wmat;
+  }
+
+  // ---------- 물 위 노 자국(퍼들), 물보라, 물방울 ----------
+  let puddleTex = null, dropGeo = null, dropMat = null;
+  function ensureFx() {
+    const T = window.THREE;
+    if (puddleTex) return;
+    const c = document.createElement("canvas"); c.width = c.height = 256;
+    const g = c.getContext("2d");
+    // 가운데: 소용돌이로 매끈해진 수면(조금 어둡고 반들반들)
+    const rg = g.createRadialGradient(128, 128, 8, 128, 128, 110);
+    rg.addColorStop(0, "rgba(10,20,25,0.45)"); rg.addColorStop(0.6, "rgba(15,28,33,0.30)"); rg.addColorStop(1, "rgba(15,28,33,0)");
+    g.fillStyle = rg; g.beginPath(); g.arc(128, 128, 110, 0, Math.PI * 2); g.fill();
+    // 테두리: 끊어진 흰 거품 고리 두 겹
+    g.lineCap = "round";
+    for (const [r, w, a] of [[98, 10, 0.95], [80, 6, 0.6], [62, 3, 0.35]]) {
+      for (let k = 0; k < 18; k++) {
+        const a0 = Math.random() * Math.PI * 2, len = 0.2 + Math.random() * 0.5;
+        g.strokeStyle = `rgba(255,255,255,${a * (0.6 + Math.random() * 0.4)})`; g.lineWidth = w * (0.6 + Math.random() * 0.6);
+        g.beginPath(); g.arc(128, 128, r + (Math.random() - 0.5) * 8, a0, a0 + len); g.stroke();
+      }
+    }
+    // 소용돌이 줄무늬
+    for (let k = 0; k < 5; k++) {
+      g.strokeStyle = "rgba(255,255,255,0.25)"; g.lineWidth = 2;
+      g.beginPath(); for (let t = 0; t < 1; t += 0.02) { const a = k * 1.25 + t * 4, r = 20 + t * 60; const x = 128 + Math.cos(a) * r, y = 128 + Math.sin(a) * r; t ? g.lineTo(x, y) : g.moveTo(x, y); } g.stroke();
+    }
+    puddleTex = new T.CanvasTexture(c);
+    dropGeo = new T.SphereGeometry(0.008, 6, 4);
+    dropMat = new T.MeshBasicMaterial({ color: 0xeef6ff, transparent: true, opacity: 0.85 });
+  }
+  function bladeWorld(o) { const v = new window.THREE.Vector3(); o.bladeTip.getWorldPosition(v); boat.worldToLocal(v); return v; }
+  function addPuddle(o, strength) {
+    const T = window.THREE; ensureFx();
+    const p = bladeWorld(o);
+    for (let k = 0; k < 2; k++) {
+      const m = new T.Mesh(new T.PlaneGeometry(1, 1), new T.MeshBasicMaterial({ map: puddleTex, transparent: true, depthWrite: false, opacity: 1, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(p.x + (k ? o.s * 0.12 : 0), WATER_Y + 0.012, p.z + (k ? 0.1 : 0));
+      const sc = (k ? 0.35 : 0.5) * (0.7 + 0.5 * strength);
+      m.scale.set(sc, sc, sc);
+      m.userData = { t: 0, life: 7 + Math.random() * 2, grow: 0.06 + Math.random() * 0.04, spin: (Math.random() - 0.5) * 0.4 };
+      boat.add(m); puddles.push(m);
+    }
+  }
+  function addSpray(o, strength, n) {
+    const T = window.THREE; ensureFx();
+    const p = bladeWorld(o);
+    for (let k = 0; k < n; k++) {
+      const m = new T.Mesh(dropGeo, dropMat.clone());
+      m.position.set(p.x + (Math.random() - 0.5) * 0.2, WATER_Y + 0.01, p.z + (Math.random() - 0.5) * 0.15);
+      m.userData = { v: new T.Vector3((Math.random() - 0.5) * 0.8, 0.5 + Math.random() * 1.2 * strength, (Math.random() - 0.3) * 0.9), t: 0, life: 0.5 + Math.random() * 0.3 };
+      boat.add(m); spray.push(m);
+    }
+  }
+  function addDrip(o) {
+    const T = window.THREE; ensureFx();
+    const p = bladeWorld(o);
+    const m = new T.Mesh(dropGeo, dropMat.clone());
+    m.position.copy(p); m.position.x += (Math.random() - 0.5) * 0.15; m.scale.setScalar(0.6 + Math.random() * 0.6);
+    m.userData = { v: new T.Vector3(0, -0.2, 0), t: 0, life: 1.2, drip: true };
+    boat.add(m); drops.push(m);
+  }
+  function updateFx(dt) {
+    const v = S.v;
+    for (let i = puddles.length - 1; i >= 0; i--) {
+      const m = puddles[i], u = m.userData; u.t += dt;
+      m.position.z += v * dt;                                  // 배가 앞으로 가므로 자국은 뒤로 흘러감
+      const s = m.scale.x + u.grow * dt; m.scale.set(s, s, s); m.rotation.z += u.spin * dt;
+      m.material.opacity = Math.pow(1 - u.t / u.life, 1.4);
+      if (u.t > u.life || m.position.z > 12) { boat.remove(m); m.geometry.dispose(); m.material.dispose(); puddles.splice(i, 1); }
+    }
+    for (const arr of [spray, drops]) for (let i = arr.length - 1; i >= 0; i--) {
+      const m = arr[i], u = m.userData; u.t += dt;
+      u.v.y -= 9.8 * dt; m.position.addScaledVector(u.v, dt); m.position.z += v * dt * (u.drip ? 0 : 0.5);
+      m.material.opacity = 0.85 * (1 - u.t / u.life);
+      if (u.t > u.life || m.position.y < WATER_Y - 0.02) { boat.remove(m); m.material.dispose(); arr.splice(i, 1); }
+    }
+    if (wake) wake.userData.mat.opacity = 0.55 * smooth((S.vSmooth - 0.4) / 3);
+  }
+
+  // ---------- 노 동작 ----------
+  // 단계: recovery(물 밖, 눕힘) → 캐치 직전 세우기 → drive(물속) → finish(빼기) → recovery
+  let squared = false, dripTimer = 0;
+  function updateOars(dt) {
+    // 손 위치 p(0=팔 뻗음, 1=당김) → 노 각도. 손이 앞이면 블레이드도 앞 (앞을 보고 젓는 방식)
+    const sweepDeg = (p) => { const d = clamp((0.5 - p) / 0.55, -1, 1); return Math.asin(d) * 180 / Math.PI * 0.78; };  // 약 +62° ~ -48°
+    const target = sweepDeg(S.p);
+    const pushing = S.hv > 0.12 && S.p > 0.03 && S.p < 0.98;
+    const returning = S.hv < -0.08;
+    if (pushing && S.phase !== "drive") setPhase("drive");
+    else if (S.phase === "drive" && (S.p > 0.93 || (S.hv < 0.02 && S.p > 0.6))) setPhase("finish");
+    else if ((S.phase === "finish" || S.phase === "drive") && returning) setPhase("recovery");
+    S.phaseT += dt;
+
+    const nearCatch = S.phase === "recovery" && S.p < 0.18;
+    if (nearCatch && !squared) { squared = true; sndClunk(0.35); }      // 블레이드 세우는 '딸깍'
+    if (S.phase === "drive") squared = false;
+
+    for (const o of oars) {
+      o.sweep = lerp(o.sweep, target, 1 - Math.exp(-dt * 18));
+      let hTarget, fTarget;
+      if (S.phase === "drive") { hTarget = -0.06; fTarget = 0; }                 // 물속, 세움
+      else if (S.phase === "finish") { hTarget = 0.10; fTarget = 0; }           // 빼는 중
+      else { hTarget = nearCatch ? 0.07 : 0.17; fTarget = nearCatch ? 0 : 1; }  // 물 위, 눕힘 / 입수 직전 세움
+      o.height = lerp(o.height, hTarget, 1 - Math.exp(-dt * (S.phase === "drive" ? 22 : 9)));
+      o.fea = lerp(o.fea, fTarget, 1 - Math.exp(-dt * 14));
+      o.pivot.rotation.y = o.s * o.sweep * Math.PI / 180;
+      const bladeY = WATER_Y + o.height, dy = bladeY - (PIN_Y + 0.06);
+      o.pitch.rotation.z = o.s * Math.atan2(dy, OUTBOARD - 0.2);
+      o.feather.rotation.x = -o.s * o.fea * Math.PI / 2 * 0.95;
+    }
+    if (S.phase === "recovery" && S.phaseT < 0.9) {                       // 노를 든 직후 물방울
+      dripTimer -= dt;
+      if (dripTimer <= 0) { dripTimer = 0.07 + Math.random() * 0.1; for (const o of oars) if (Math.random() < 0.7) addDrip(o); }
+    }
+  }
+  function setPhase(ph) {
+    const prev = S.phase; S.phase = ph; S.phaseT = 0;
+    if (ph === "drive") {
+      S.strokeStart = performance.now();
+      const power = clamp(S.hv / 4.5, 0.15, 1);
+      S.drivePower = power;
+      sndCatch(power);
+      for (const o of oars) addSpray(o, power, 6 + Math.round(10 * power));
+      haptic(0.35 + 0.4 * power, 40);
+    } else if (ph === "finish") {
+      for (const o of oars) addPuddle(o, S.drivePower);
+    } else if (ph === "recovery" && prev !== "recovery") {
+      sndClunk(0.28); sndDrip();                                          // 블레이드 눕히는 '딸깍' + 물방울
+      for (const o of oars) addSpray(o, 0.3, 4);
+    }
+  }
+  let padsNow = [];
+  function haptic(v, ms) { for (const g of padsNow) { const h = g.hapticActuators && g.hapticActuators[0]; if (h && h.pulse) h.pulse(v, ms).catch(() => {}); } }
+
+  // ---------- 선체 미세한 움직임 ----------
+  let rollT = Math.random() * 10;
+  function updateBoatMotion(dt) {
+    rollT += dt;
+    const sinceCatch = (performance.now() - S.strokeStart) / 1000;
+    const check = Math.exp(-sinceCatch * 7) * 0.006;                 // 캐치 직후 뱃머리가 살짝 숙여짐
+    const lift = S.phase === "drive" ? 0.003 * S.drivePower : 0;
+    boat.rotation.x = lerp(boat.rotation.x, -check + lift, 1 - Math.exp(-dt * 6));
+    boat.rotation.z = 0.004 * Math.sin(rollT * 0.9) + 0.002 * Math.sin(rollT * 2.3);   // 균형 잡는 미세한 흔들림
+    boat.position.y = 0.004 * Math.sin(rollT * 1.7) * smooth(S.vSmooth / 2);
+  }
+
+  // ---------- 스피드코치 화면 ----------
+  let coachLast = 0;
+  function drawCoach(now) {
+    if (!coachCtx || now - coachLast < 250) return; coachLast = now;
+    const c = coachCtx;
+    c.fillStyle = "#c9d3c5"; c.fillRect(0, 0, 256, 160);
+    c.fillStyle = "#1d2420";
+    c.font = "600 56px ui-monospace,Consolas,monospace"; c.textAlign = "center";
+    c.fillText(S.vSmooth > 0.3 ? fmtPace(500 / S.vSmooth) : "--:--", 128, 70);
+    c.font = "600 34px ui-monospace,Consolas,monospace";
+    c.textAlign = "left"; c.fillText(String(Math.round(S.spm)), 18, 135);
+    c.textAlign = "right"; c.fillText(Math.floor(S.dist) + "m", 240, 135);
+    c.font = "500 14px system-ui,sans-serif"; c.textAlign = "left"; c.fillText("SPM", 18, 100);
+    c.textAlign = "right"; c.fillText("/500m", 240, 20);
+    coachTex.needsUpdate = true;
+  }
+
+  // ---------- 영상 색에 맞춰 조명 ----------
+  let lightLast = 0;
+  const probe = document.createElement("canvas"); probe.width = 16; probe.height = 8;
+  const pctx = probe.getContext("2d", { willReadFrequently: true });
+  function updateLight(now) {
+    if (now - lightLast < 2000) return; lightLast = now;
+    const vid = video(); if (!vid || vid.readyState < 2) return;
+    try {
+      pctx.drawImage(vid, 0, 0, 16, 8);
+      const d = pctx.getImageData(0, 0, 16, 8).data;
+      const avg = (y0, y1) => { let r = 0, g = 0, b = 0, n = 0; for (let y = y0; y < y1; y++) for (let x = 0; x < 16; x++) { const i = (y * 16 + x) * 4; r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; } return [r / n / 255, g / n / 255, b / n / 255]; };
+      const sky = avg(0, 3), wat = avg(5, 8);
+      hemi.color.setRGB(0.5 + sky[0] * 0.6, 0.5 + sky[1] * 0.6, 0.5 + sky[2] * 0.6);
+      hemi.groundColor.setRGB(wat[0] * 0.8, wat[1] * 0.8, wat[2] * 0.8);
+      sun.intensity = 0.5 + 0.9 * (0.3 * sky[0] + 0.6 * sky[1] + 0.1 * sky[2]);
+    } catch (e) {}
+  }
+
+  // ======================================================================
+  // 영상 텍스처
+  // ======================================================================
   function uploadVideo() {
     const vid = video();
-    if (!vid || vid.readyState < 3 || !texOK) return;   // 충분히 받아진 프레임만
+    if (!vid || vid.readyState < 3 || !texOK) return;
     if (vid.currentTime === lastVideoTime) return;
     lastVideoTime = vid.currentTime;
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, vid); }
-    catch (e) { texOK = false; setStatus("유튜브가 영상 화면을 넘겨주지 않았습니다(" + e.name + "). 이 방식은 이 브라우저에서 쓸 수 없어요."); }
+    if (vtex.image !== vid) vtex.image = vid;
+    vtex.needsUpdate = true;
   }
 
-  // 4x4 행렬 (column-major)
-  function mul(a, b) { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s; } return o; }
-  function inv(m) {
-    const o = new Float32Array(16);
-    const [a00, a01, a02, a03, a10, a11, a12, a13, a20, a21, a22, a23, a30, a31, a32, a33] = m;
-    const b00 = a00 * a11 - a01 * a10, b01 = a00 * a12 - a02 * a10, b02 = a00 * a13 - a03 * a10, b03 = a01 * a12 - a02 * a11,
-      b04 = a01 * a13 - a03 * a11, b05 = a02 * a13 - a03 * a12, b06 = a20 * a31 - a21 * a30, b07 = a20 * a32 - a22 * a30,
-      b08 = a20 * a33 - a23 * a30, b09 = a21 * a32 - a22 * a31, b10 = a21 * a33 - a23 * a31, b11 = a22 * a33 - a23 * a32;
-    let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
-    if (!det) return o; det = 1 / det;
-    o[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det; o[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
-    o[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det; o[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
-    o[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det; o[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
-    o[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det; o[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
-    o[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det; o[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
-    o[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det; o[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
-    o[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det; o[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
-    o[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det; o[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
-    return o;
-  }
-
-  // ---------- VR 세션 ----------
-  let session = null, refSpace = null, canvas = null, aPrev = false;
+  // ======================================================================
+  // VR 세션
+  // ======================================================================
+  let session = null, aPrev = false;
   async function startVR() {
     if (session) { session.end(); return; }
+    if (!window.THREE) { setStatus("3D 엔진이 없습니다. youtube-rowing.bat으로 실행해 주세요."); return; }
     const vid = video();
     if (!vid) { setStatus("유튜브 영상을 찾지 못했습니다. 영상 페이지에서 실행해 주세요."); return; }
     initAudio(); if (actx && actx.state === "suspended") actx.resume();
     setQuality();
-    try {
-      session = await navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor"] });
-    } catch (e) { setStatus("VR을 시작하지 못했습니다: " + e.message); session = null; return; }
-    if (!canvas) { canvas = document.createElement("canvas"); initGL(canvas); }
-    await gl.makeXRCompatible();
-    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
-    refSpace = await session.requestReferenceSpace("local");
+    try { session = await navigator.xr.requestSession("immersive-vr", { optionalFeatures: ["local-floor"] }); }
+    catch (e) { setStatus("VR을 시작하지 못했습니다: " + e.message); session = null; return; }
+    if (!renderer) initScene();
+    camera.layers.disable(1);
+    if (renderer.xr.setFoveation) renderer.xr.setFoveation(1);
+    await renderer.xr.setSession(session);
     S.xr = true; S.yaw = null; texOK = true; lastVideoTime = -1;
-    vrBtn.textContent = "VR 종료";
-    setStatus("VR 실행 중");
+    vrBtn.textContent = "VR 종료"; setStatus("VR 실행 중");
     vid.pause();
     applySound();
     session.addEventListener("end", () => {
       S.xr = false; session = null; vrBtn.textContent = "VR 시작";
       setStatus("VR 종료됨. 다시 'VR 시작'을 누르면 이어서 됩니다.");
       const v = video(); if (v) v.playbackRate = 1;
-      applySound();
+      applySound(); renderer.setAnimationLoop(null);
     });
-    session.requestAnimationFrame(onXRFrame);
+    renderer.setAnimationLoop(onXRFrame);
   }
   vrBtn.onclick = startVR;
 
-  function onXRFrame(t, frame) {
-    if (!session) return;
-    session.requestAnimationFrame(onXRFrame);
-    const pose = frame.getViewerPose(refSpace);
-    if (!pose) return;
-    const hp = pose.transform.position, hq = pose.transform.orientation;
-    if (S.yaw === null) {
-      const fx = -2 * (hq.x * hq.z + hq.w * hq.y), fz = -(1 - 2 * (hq.x * hq.x + hq.y * hq.y));
-      S.yaw = Math.atan2(-fx, -fz);   // 지금 보는 방향을 영상의 정면으로
-    }
-    readControllers(t, frame, hp);
-    step(performance.now());   // VR 중에는 페이지 쪽 화면 갱신이 멈출 수 있어 여기서 물리 계산
-
-    // 그리기
-    uploadVideo();
-    const layer = session.renderState.baseLayer;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-    gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(prog);
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.enableVertexAttribArray(loc.p); gl.vertexAttribPointer(loc.p, 2, gl.FLOAT, false, 0, 0);
-    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex); gl.uniform1i(loc.tex, 0);
-    gl.uniform1i(loc.fmt, S.format === "360tb" ? 1 : S.format === "180" ? 2 : 0);
-    gl.uniform1f(loc.yaw, S.yaw);
-    pose.views.forEach((view, i) => {
-      const vp = layer.getViewport(view);
-      gl.viewport(vp.x, vp.y, vp.width, vp.height);
-      const vm = Float32Array.from(view.transform.inverse.matrix);
-      vm[12] = vm[13] = vm[14] = 0;   // 회전만 (영상은 무한히 먼 배경)
-      gl.uniformMatrix4fv(loc.invVP, false, inv(mul(view.projectionMatrix, vm)));
-      gl.uniform1i(loc.eye, view.eye === "right" ? 1 : (view.eye === "left" ? 0 : i));
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    });
+  function recenter(xrCam) {
+    const T = window.THREE;
+    const pos = new T.Vector3().setFromMatrixPosition(xrCam.matrixWorld);
+    const dir = new T.Vector3(0, 0, -1).applyQuaternion(new T.Quaternion().setFromRotationMatrix(xrCam.matrixWorld));
+    S.yaw = Math.atan2(-dir.x, -dir.z);
+    worldGroup.position.copy(pos); worldGroup.rotation.set(0, S.yaw, 0);
   }
 
-  function readControllers(t, frame, hp) {
-    const fx = -Math.sin(S.yaw), fz = -Math.cos(S.yaw);
-    let sum = 0, n = 0, pads = [], aNow = false;
+  let headPos = null;
+  function onXRFrame(t, frame) {
+    if (!session || !frame) return;
+    const T = window.THREE;
+    const now = performance.now();
+    const xrCam = renderer.xr.getCamera(camera);
+    if (!headPos) headPos = new T.Vector3();
+    headPos.setFromMatrixPosition(xrCam.matrixWorld);
+    if (S.yaw === null && headPos.lengthSq() > 0) recenter(xrCam);
+    // 배경 영상은 머리 위치를 따라감(무한히 먼 풍경), 방향은 정면 기준
+    videoGroup.position.copy(headPos); videoGroup.rotation.set(0, S.yaw || 0, 0);
+
+    readControllers(frame, now);
+    step(now);
+    const dt = Math.min(0.05, (now - (onXRFrame.last || now)) / 1000); onXRFrame.last = now;
+    updateOars(dt); updateFx(dt); updateBoatMotion(dt); drawCoach(now); updateLight(now); updateLoops();
+    uploadVideo();
+    renderer.render(scene, camera);
+  }
+
+  function readControllers(frame, now) {
+    const ref = renderer.xr.getReferenceSpace();
+    const yaw = S.yaw || 0, fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+    let sum = 0, n = 0, aNow = false, gi = 0; padsNow = [];
     for (const src of session.inputSources) {
       const gp = src.gamepad;
       if (gp) {
-        if (gp.buttons[1] && gp.buttons[1].pressed) S.yaw = null;                       // 그립: 정면 다시 맞추기
+        if (gp.buttons[1] && gp.buttons[1].pressed) S.yaw = null;
         if (src.handedness === "right" && gp.buttons[4] && gp.buttons[4].pressed) aNow = true;
+        padsNow.push(gp);
       }
       if (!src.gripSpace) continue;
-      const p = frame.getPose(src.gripSpace, refSpace);
-      if (!p) continue;
-      const c = p.transform.position;
-      sum += (c.x - hp.x) * fx + (c.z - hp.z) * fz; n++;
-      if (gp) pads.push(gp);
+      const pose = frame.getPose(src.gripSpace, ref);
+      if (!pose) continue;
+      const c = pose.transform.position;
+      sum += (c.x - headPos.x) * fx + (c.z - headPos.z) * fz; n++;
+      if (grips[gi]) { grips[gi].visible = true; grips[gi].position.set(c.x, c.y, c.z); grips[gi].rotation.set(0, yaw, Math.PI / 2); gi++; }
     }
-    if (aNow && !aPrev) { S.mode = S.mode === "smooth" ? "instant" : "smooth"; setModeText(); save(); }
+    for (; gi < grips.length; gi++) grips[gi].visible = false;
+    if (aNow && !aPrev) { S.mode = S.mode === "smooth" ? "instant" : "smooth"; paintMode(); save(); }
     aPrev = aNow;
     S.hands = n;
     if (!n || S.yaw === null) return;
-    const d = sum / n, dt = Math.min(0.05, (t - (readControllers.t || t)) / 1000); readControllers.t = t;
+    const d = sum / n, dt = Math.min(0.05, (now - (readControllers.t || now)) / 1000); readControllers.t = now;
     S.dMax = Math.max(d, S.dMax - 0.015 * dt);
     S.dMin = Math.min(d, S.dMin + 0.015 * dt);
     if (S.dMax - S.dMin < 0.22) { const m = (S.dMax + S.dMin) / 2; S.dMax = m + 0.11; S.dMin = m - 0.11; }
-    const pNew = Math.min(1, Math.max(0, (S.dMax - d) / (S.dMax - S.dMin)));
-    if (S.p < 0.06 && pNew >= 0.06) { splashSound(1); for (const g of pads) { const h = g.hapticActuators && g.hapticActuators[0]; if (h && h.pulse) h.pulse(0.4, 40).catch(() => {}); } }
-    S.p = pNew;
+    S.p = clamp((S.dMax - d) / (S.dMax - S.dMin), 0, 1);
   }
 
-  // ---------- 물리 + 영상 배속 ----------
+  // ======================================================================
+  // 물리 + 영상 배속
+  // ======================================================================
   const K_DRIVE = 1.9, C_DRAG = 0.06, C_LIN = 0.05;
   function tick(now) {
     if (!S.on) return;
@@ -335,6 +684,7 @@
     const dt = Math.min(0.05, (now - S.last) / 1000); S.last = now;
     if (!S.xr && S.p > 0) S.p = Math.max(0, S.p - dt / 1.4);
     const hv = (S.p - S.pPrev) / Math.max(dt, 1e-3);
+    S.hv = lerp(S.hv, hv, 1 - Math.exp(-dt * 25));
     let a = -C_DRAG * S.v * Math.abs(S.v) - C_LIN * S.v;
     if (hv > 0.05) a += K_DRIVE * S.power * Math.min(hv, 6) ** 2;
     S.v = Math.max(0, S.v + a * dt); S.dist += S.v * dt;
@@ -345,7 +695,6 @@
     S.spm = st.length >= 2 && now - st[st.length - 1] < 6000 ? 60000 * (st.length - 1) / (st[st.length - 1] - st[0]) : 0;
     S.vSmooth += (S.v - S.vSmooth) * (1 - Math.exp(-dt / S.tau));
     S.rate = Math.min(2, (S.mode === "smooth" ? S.vSmooth : S.v) / S.vRef);
-    if (ambGain && actx) ambGain.gain.setTargetAtTime(0.25 + 0.75 * Math.min(1, S.vSmooth / 4), actx.currentTime, 0.4);
 
     const vid = video();
     if (vid && S.xr) {
@@ -370,8 +719,21 @@
     toggle() {
       S.on = !S.on;
       panel.style.display = S.on ? "" : "none";
-      if (!S.on) { if (session) session.end(); const v = video(); if (v) { v.playbackRate = 1; v.muted = false; } stopAmbience(); }
+      if (!S.on) { if (session) session.end(); const v = video(); if (v) { v.playbackRate = 1; v.muted = false; } stopLoops(); }
       if (S.on) { S.last = performance.now(); requestAnimationFrame(tick); }
+    },
+    // PC 미리보기/테스트용: VR 없이 한 장면 그리기
+    _preview(host, w, h) {
+      if (!renderer) initScene();
+      renderer.setSize(w || 960, h || 540); camera.aspect = (w || 960) / (h || 540); camera.updateProjectionMatrix();
+      camera.position.set(0, 0, 0); camera.lookAt(0, -0.45, -2.2);
+      (host || document.body).appendChild(renderer.domElement);
+      return {
+        renderer, scene, camera, S,
+        step(dt, p) { S.pPrev = S.p; S.p = p; S.hv = (S.p - S.pPrev) / dt; S.v = Math.max(S.v, 3); S.vSmooth = 3; updateOars(dt); updateFx(dt); updateBoatMotion(dt); drawCoach(performance.now() + 1000 * Math.random()); },
+        render() { renderer.render(scene, camera); },
+        counts() { return { puddles: puddles.length, spray: spray.length, drops: drops.length, phase: S.phase, puddleZ: puddles.map(m => +m.position.z.toFixed(2)), puddleOp: puddles.map(m => +m.material.opacity.toFixed(2)) }; },
+      };
     },
   };
   requestAnimationFrame(tick);
