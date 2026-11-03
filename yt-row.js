@@ -97,32 +97,44 @@
   }
   setQuality();
 
-  // ---------- 소리: 유튜브 음악 대신 물소리 ----------
-  let actx = null, noise = null, ambGain = null, ambSrc = null;
+  // ---------- 소리: 유튜브 음악 대신 실제 녹음된 물소리 ----------
+  // 녹음: Pixabay(freesound_community) "Paddles rowing on a calm water stream",
+  //       "Water under boat gurgling waves Manitoulin 05" — Pixabay Content License
+  let actx = null, strokeBufs = [], ambBuf = null, ambGain = null, ambSrc = null, soundsLoading = false;
   function initAudio() {
     if (actx) return;
+    try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; return; }
+    loadSounds();
+  }
+  async function loadSounds() {
+    if (soundsLoading || !actx) return; soundsLoading = true;
+    let data = window.__rowSounds;
+    if (!data) { try { data = await (await fetch("https://madmachine-x.github.io/rowing-vr/sounds.json")).json(); } catch (e) { data = null; } }
+    if (!data) { soundsLoading = false; return; }
+    const dec = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return actx.decodeAudioData(u.buffer); };
     try {
-      actx = new (window.AudioContext || window.webkitAudioContext)();
-      noise = actx.createBuffer(1, actx.sampleRate * 2, actx.sampleRate);
-      const d = noise.getChannelData(0); let last = 0;
-      for (let i = 0; i < d.length; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5; } // 낮게 웅웅대는 물살 소리
-    } catch (e) { actx = null; }
+      strokeBufs = await Promise.all(data.strokes.map(dec));
+      ambBuf = await dec(data.amb);
+      if (S.xr && S.water) startAmbience();
+    } catch (e) {}
   }
   function startAmbience() {
-    if (!actx || ambSrc) return;
-    ambSrc = actx.createBufferSource(); ambSrc.buffer = noise; ambSrc.loop = true;
-    const lp = actx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 700;
-    ambGain = actx.createGain(); ambGain.gain.value = 0.05;
-    ambSrc.connect(lp); lp.connect(ambGain); ambGain.connect(actx.destination); ambSrc.start();
+    if (!actx || !ambBuf || ambSrc) return;
+    ambSrc = actx.createBufferSource(); ambSrc.buffer = ambBuf; ambSrc.loop = true;
+    ambSrc.loopStart = 0.05; ambSrc.loopEnd = ambBuf.duration - 0.05;   // 앞뒤 무음 구간 빼고 반복
+    ambGain = actx.createGain(); ambGain.gain.value = 0.25;
+    ambSrc.connect(ambGain); ambGain.connect(actx.destination); ambSrc.start(0, 0.05);
   }
   function stopAmbience() { try { if (ambSrc) ambSrc.stop(); } catch (e) {} ambSrc = null; ambGain = null; }
+  let lastStroke = -1;
   function splashSound(vol) {
-    if (!actx || !S.water) return;
-    const src = actx.createBufferSource(); src.buffer = noise;
-    const bp = actx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 900 + Math.random() * 600; bp.Q.value = 0.9;
-    const g = actx.createGain(), t = actx.currentTime;
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.9 * vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
-    src.connect(bp); bp.connect(g); g.connect(actx.destination); src.start(t, Math.random()); src.stop(t + 0.55);
+    if (!actx || !S.water || !strokeBufs.length) return;
+    let i = Math.floor(Math.random() * strokeBufs.length);
+    if (i === lastStroke) i = (i + 1) % strokeBufs.length; lastStroke = i;   // 같은 소리 연속 방지
+    const src = actx.createBufferSource(); src.buffer = strokeBufs[i];
+    src.playbackRate.value = 0.94 + Math.random() * 0.12;                  // 매번 살짝 다르게
+    const g = actx.createGain(); g.gain.value = vol;
+    src.connect(g); g.connect(actx.destination); src.start();
   }
   function applySound() {
     const vid = video();
@@ -300,7 +312,6 @@
     if (S.dMax - S.dMin < 0.22) { const m = (S.dMax + S.dMin) / 2; S.dMax = m + 0.11; S.dMin = m - 0.11; }
     const pNew = Math.min(1, Math.max(0, (S.dMax - d) / (S.dMax - S.dMin)));
     if (S.p < 0.06 && pNew >= 0.06) { splashSound(1); for (const g of pads) { const h = g.hapticActuators && g.hapticActuators[0]; if (h && h.pulse) h.pulse(0.4, 40).catch(() => {}); } }
-    if (S.p < 0.95 && pNew >= 0.95) splashSound(0.4);
     S.p = pNew;
   }
 
@@ -325,7 +336,7 @@
     S.spm = st.length >= 2 && now - st[st.length - 1] < 6000 ? 60000 * (st.length - 1) / (st[st.length - 1] - st[0]) : 0;
     S.vSmooth += (S.v - S.vSmooth) * (1 - Math.exp(-dt / S.tau));
     S.rate = Math.min(2, (S.mode === "smooth" ? S.vSmooth : S.v) / S.vRef);
-    if (ambGain && actx) ambGain.gain.setTargetAtTime(0.04 + 0.22 * Math.min(1, S.vSmooth / 4), actx.currentTime, 0.3);
+    if (ambGain && actx) ambGain.gain.setTargetAtTime(0.25 + 0.75 * Math.min(1, S.vSmooth / 4), actx.currentTime, 0.4);
 
     const vid = video();
     if (vid && S.xr) {
