@@ -55,6 +55,12 @@ h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.08em
 /* 엔진 패널 버튼을 앱 크기에 맞춤 */
 #rowvr-panel-host button { font-size: 14px !important; }
 #rowvr-panel-host button:last-child { font-size: 18px !important; padding: 16px !important; }
+.ytrow { display: flex; gap: 10px; flex-wrap: wrap; }
+.ytrow input { flex: 1 1 280px; min-width: 0; background: #0f1518; color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: 14px var(--mono); }
+.ytrow input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ytgo { background: var(--accent); color: #1a1206; border-radius: 10px; padding: 12px 18px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.ytgo:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.howto a { color: var(--accent); }
 @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .pick { transition: none; } }
 </style>
@@ -94,6 +100,19 @@ h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.08em
   </section>
 
   <section class="card" style="grid-column: 1 / -1">
+    <h2>유튜브 영상으로 젓기</h2>
+    <div class="ytrow">
+      <input id="ytUrl" type="url" value="https://www.youtube.com/watch?v=D8HeMVGkcRw&amp;t=856s" aria-label="유튜브 영상 주소" autocomplete="off">
+      <a id="ytGo" class="ytgo" href="https://www.youtube.com/watch?v=D8HeMVGkcRw&amp;t=856s" target="_blank" rel="noopener">유튜브에서 열기</a>
+    </div>
+    <ol class="howto" style="margin-top:12px">
+      <li><b>유튜브에서 열기</b>를 누르면 브라우저에 영상이 열립니다. 기본값은 마리나 델 레이 로잉 360 영상이에요.</li>
+      <li>즐겨찾기에서 <b>로잉VR</b>을 한 번 누르면 주황색 패널이 뜹니다. → <b>VR 시작</b></li>
+      <li>즐겨찾기가 아직 없다면 <a href="yt.html" target="_blank" rel="noopener">즐겨찾기 만들기</a> (처음 한 번만)</li>
+    </ol>
+  </section>
+
+  <section class="card" style="grid-column: 1 / -1">
     <h2>로잉머신에서 쓰는 법</h2>
     <ol class="howto">
       <li><b>발을 먼저 묶고</b> 헤드셋을 쓰세요. 바닥 경계는 로잉머신이 들어가게 넉넉히 잡아 주세요.</li>
@@ -104,7 +123,6 @@ h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.08em
   </section>
 
   <div class="foot">
-    <a href="yt.html">유튜브 영상으로 저어 보기 (PC 연결 필요)</a>
     <span>소리: Pixabay · 3D: three.js</span>
   </div>
 </main>
@@ -148,6 +166,15 @@ h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.08em
     vid.currentTime = Math.min(5, vid.duration / 3);
   });
   vid.addEventListener("error", () => { $("vInfo").textContent = "이 영상을 재생할 수 없습니다. MP4(H.264) 파일인지 확인해 주세요."; });
+
+  // ---------- 유튜브 주소 ----------
+  const yt = $("ytUrl"), go = $("ytGo");
+  try { const saved = localStorage.getItem("rowvr.ytUrl"); if (saved) yt.value = saved; } catch (e) {}
+  const syncYt = () => {
+    const v = yt.value.trim();
+    if (/^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//.test(v)) { go.href = v; try { localStorage.setItem("rowvr.ytUrl", v); } catch (e) {} }
+  };
+  yt.addEventListener("input", syncYt); syncYt();
 
   // ---------- 앱 설치 ----------
   let deferred = null;
