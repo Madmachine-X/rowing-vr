@@ -106,9 +106,9 @@ h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.08em
       <a id="ytGo" class="ytgo" href="https://www.youtube.com/watch?v=D8HeMVGkcRw&amp;t=856s" target="_blank" rel="noopener">유튜브에서 열기</a>
     </div>
     <ol class="howto" style="margin-top:12px">
-      <li><b>유튜브에서 열기</b>를 누르면 브라우저에 영상이 열립니다. 기본값은 마리나 델 레이 로잉 360 영상이에요.</li>
-      <li>즐겨찾기에서 <b>로잉VR</b>을 한 번 누르면 주황색 패널이 뜹니다. → <b>VR 시작</b></li>
-      <li>즐겨찾기가 아직 없다면 <a href="yt.html" target="_blank" rel="noopener">즐겨찾기 만들기</a> (처음 한 번만)</li>
+      <li><b>유튜브에서 열기</b>를 누르면 영상이 열리고, 패널을 띄우는 코드가 <b>자동으로 복사</b>됩니다.</li>
+      <li>유튜브 화면의 <b>주소창</b>을 누르고 <b>javascript:</b> 만 직접 친 다음, 바로 이어서 <b>붙여넣기</b> → 이동. 주황색 패널이 뜹니다. → <b>VR 시작</b></li>
+      <li>javascript: 를 같이 복사하지 않는 건 브라우저가 붙여넣을 때 지워 버리기 때문이에요. PC가 연결돼 있으면 <b>youtube-rowing.bat</b>이 더 편합니다.</li>
     </ol>
   </section>
 
@@ -119,7 +119,7 @@ h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.08em
       <a id="hkGo" class="ytgo" style="background:#5cc98a;color:#08140d" href="https://www.youtube.com/watch?v=64alx-qUnUI&amp;rowvr=hike" target="_blank" rel="noopener">유튜브에서 열기</a>
     </div>
     <ol class="howto" style="margin-top:12px">
-      <li><b>유튜브에서 열기</b> → 즐겨찾기 <b>로잉VR</b>을 한 번 누르면 초록색 <b>하이킹 VR</b> 패널이 뜹니다. (로잉과 같은 즐겨찾기예요) → <b>VR 시작</b></li>
+      <li><b>유튜브에서 열기</b>(코드 자동 복사) → 유튜브 주소창에 <b>javascript:</b> 를 치고 이어서 <b>붙여넣기</b> → 이동하면 초록색 <b>하이킹 VR</b> 패널이 뜹니다. → <b>VR 시작</b> (PC 연결 시엔 <b>youtube-hiking.bat</b>)</li>
       <li>패널에서 <b>제자리 걸음</b> 또는 <b>러닝머신</b>을 고르세요. 러닝머신은 실제 러닝머신과 같은 속도로 맞춰 주세요. 걷기만 지원해요(최대 6 km/h).</li>
       <li>걸음이 3번 고르게 잡히면 영상이 출발하고, 멈추면 1초쯤 뒤에 섭니다. 발밑을 내려다보면 속도와 걸음 수가 보여요.</li>
       <li><b>러닝머신은 손잡이를 꼭 잡고</b> 안전 클립을 다세요. 뒤로 밀리거나 두 손을 놓으면 빨간 경고와 진동이 옵니다.</li>
@@ -204,6 +204,20 @@ h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.08em
     if (/^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//.test(v)) { hkGo.href = v + (v.includes("?") ? "&" : "?") + "rowvr=hike"; try { localStorage.setItem("rowvr.hikeUrl", v); } catch (e) {} }
   };
   hk.addEventListener("input", syncHk); syncHk();
+
+  // ---------- 패널 코드 자동 복사 (주소창에 javascript: 뒤로 붙여넣기용) ----------
+  const LOADER = "(async()%3D%3E%7Bif(window.__rowVR)return%20void%20window.__rowVR.toggle()%3Bif(window.__rowVRLoading)return%3Bwindow.__rowVRLoading%3D!0%3Bconst%20e%3Ddocument.createElement(%22div%22)%3Be.style.cssText%3D%22position%3Afixed%3Bright%3A16px%3Bbottom%3A16px%3Bz-index%3A2147483647%3Bbackground%3A%23151c20%3Bcolor%3A%23f2a33a%3Bborder%3A1px%20solid%20%23f2a33a%3Bborder-radius%3A12px%3Bpadding%3A14px%2018px%3Bfont%3A600%2015px%20system-ui%2Csans-serif%22%2Ce.textContent%3D%22%EB%A1%9C%EC%9E%89%20VR%20%EB%B6%88%EB%9F%AC%EC%98%A4%EB%8A%94%20%EC%A4%91%E2%80%A6%22%2C(document.body%7C%7Cdocument.documentElement).appendChild(e)%3Btry%7Blet%20t%3Dnull%3Bwindow.trustedTypes%26%26trustedTypes.createPolicy%26%26(t%3DtrustedTypes.createPolicy(%22rowvr%22%2BDate.now()%2C%7BcreateScript%3Ae%3D%3Ee%7D))%3Bconst%20o%3D%22https%3A%2F%2Fmadmachine-x.github.io%2Frowing-vr%2F%22%2Cn%3Dasync(e%2Cn)%3D%3E%7Blet%20i%3Dawait(await%20fetch(o%2Be%2B%22%3F%22%2BDate.now())).text()%3Bn%26%26(i%3Dn(i))%2C(0%2Ceval)(t%3Ft.createScript(i)%3Ai)%7D%3Bwindow.THREE%7C%7Cawait%20n(%22three-r128.min.js%22%2C(e%3D%3E%22(function()%7Bvar%20define%3Dundefined%2Cexports%3Dundefined%2Cmodule%3Dundefined%3B%22%2Be%2B%22%5Cn%7D).call(window)%3B%22))%2Cwindow.__rowSounds%7C%7Cawait%20n(%22yt-sounds.js%22)%2Cawait%20n(%22yt-row.js%22)%2Ce.remove()%7Dcatch(t)%7Be.textContent%3D%22%EB%A1%9C%EC%9E%89%20VR%EC%9D%84%20%EB%B6%88%EB%9F%AC%EC%98%A4%EC%A7%80%20%EB%AA%BB%ED%96%88%EC%8A%B5%EB%8B%88%EB%8B%A4%3A%20%22%2Bt.message%2CsetTimeout((()%3D%3Ee.remove())%2C6e3)%7Dwindow.__rowVRLoading%3D!1%7D)()%3B";
+  const copyText = async (txt) => {
+    try { await navigator.clipboard.writeText(txt); return true; } catch (e) {}
+    try { const ta = document.createElement("textarea"); ta.value = txt; ta.style.cssText = "position:fixed;opacity:0"; document.body.appendChild(ta); ta.select(); const ok = document.execCommand("copy"); ta.remove(); return ok; } catch (e) { return false; }
+  };
+  const toast = (msg) => {
+    let t = document.getElementById("copyToast");
+    if (!t) { t = document.createElement("div"); t.id = "copyToast"; t.setAttribute("role", "status"); t.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#151c20;border:1px solid var(--accent);color:var(--fg);padding:12px 18px;border-radius:12px;font-size:15px;z-index:9;max-width:calc(100% - 32px)"; document.body.appendChild(t); }
+    t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 6000);
+  };
+  go.addEventListener("click", () => { copyText("window.__rowvrForce%3D'row'%3B" + LOADER).then(ok => toast(ok ? "코드 복사됨 · 유튜브 주소창에 javascript: 를 치고 붙여넣기 → 이동" : "복사가 안 됐어요. PC의 youtube-rowing.bat을 써 주세요.")); });
+  hkGo.addEventListener("click", () => { copyText("window.__rowvrForce%3D'hike'%3B" + LOADER).then(ok => toast(ok ? "코드 복사됨 · 유튜브 주소창에 javascript: 를 치고 붙여넣기 → 이동" : "복사가 안 됐어요. PC의 youtube-hiking.bat을 써 주세요.")); });
 
   // ---------- 앱 설치 ----------
   let deferred = null;

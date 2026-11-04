@@ -1,5 +1,5 @@
 // 설치형 앱용 서비스 워커: 늘 최신을 먼저 받고, 인터넷이 없으면 저장본으로 실행
-const CACHE = "rowing-vr-v19";
+const CACHE = "rowing-vr-v20";
 const SHELL = ["./", "index.html", "yt.html", "three-r128.min.js", "yt-sounds.js", "yt-row.js", "steps.html", "step-detect.js", "yt-hike.js",
                "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png"];
 self.addEventListener("install", e => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); });
