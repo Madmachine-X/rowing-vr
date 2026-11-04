@@ -15,4 +15,6 @@ Meta Quest 브라우저용 WebXR 테스트 페이지. 컨트롤러로 노 젓는
 
 
 ## 하이킹 소리
-- 발소리: Kenney "Impact Sounds" (CC0 1.0) — footstep_grass, footstep_snow
+- 발소리(흙길·낙엽): Kenney "Impact Sounds" (CC0 1.0)
+- 자갈길 발소리: Pixabay — Dragon Studio "Footsteps on gravel 2", freesound_community "footsteps dirt gravel"
+- 자연음: Pixabay — audiopapkin "Forest Ambience", SoundReality "Forest Birds Sound", soundsforyou "Wind in Trees", Nickype "The Sound of a Mountain Stream" (Pixabay Content License)
