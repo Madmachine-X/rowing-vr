@@ -11,11 +11,11 @@
 
   // ---------- 상태 ----------
   const S = {
-    on: true, walk: "inplace", tmKmh: 3.0, vRefKmh: 4.0, baseCad: 105, tau: 1.5, format: "360", quality: "hd1440",
+    on: true, walk: "inplace", tmKmh: 3.0, vRefKmh: 4.0, baseCad: 105, tau: 1.5, format: "360", quality: "hd1440", sound: "nature", surface: "dirt",
     kmh: 0, kmhSmooth: 0, rate: 0, dist: 0, xr: false, yaw: null, warn: "", warnT: 0,
   };
   try { Object.assign(S, JSON.parse(localStorage.getItem("rowvr.hike1") || "{}")); } catch (e) {}
-  const save = () => { try { localStorage.setItem("rowvr.hike1", JSON.stringify({ walk: S.walk, tmKmh: S.tmKmh, vRefKmh: S.vRefKmh, baseCad: S.baseCad, tau: S.tau, format: S.format, quality: S.quality })); } catch (e) {} };
+  const save = () => { try { localStorage.setItem("rowvr.hike1", JSON.stringify({ walk: S.walk, tmKmh: S.tmKmh, vRefKmh: S.vRefKmh, baseCad: S.baseCad, tau: S.tau, format: S.format, quality: S.quality, sound: S.sound, surface: S.surface })); } catch (e) {} };
   const video = () => document.querySelector("video.html5-main-video") || document.querySelector("video");
   const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
   let det = new StepDetector();
@@ -56,10 +56,12 @@
   cadBox = stepper("평소 걸음 빠르기 (이 빠르기면 4 km/h쯤)", () => S.baseCad, v => S.baseCad = v, 5, 70, 140, v => v + " 걸음/분");
   const showWalk = () => { tmBox.style.display = S.walk === "treadmill" ? "" : "none"; cadBox.style.display = S.walk === "inplace" ? "" : "none"; };
   showWalk();
+  segRow("소리", [["nature", "자연 소리 + 발소리"], ["video", "영상 원래 소리"]], () => S.sound, k => { S.sound = k; applySound(); });
   const setBtn = el("button", "width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid rgba(160,180,190,.25);background:transparent;color:#8d9ba1;cursor:pointer;font:inherit;font-size:13px", "설정 더 보기 ▾");
   const settings = el("div", "display:none");
   setBtn.onclick = () => { const o = settings.style.display === "none"; settings.style.display = o ? "" : "none"; setBtn.textContent = o ? "설정 접기 ▴" : "설정 더 보기 ▾"; };
   const paintFormat = segRow("영상 형식", [["360", "360"], ["360tb", "360 입체"], ["180", "180 입체"]], () => S.format, k => { S.format = k; if (scene) buildVideoMeshes(); }, settings);
+  segRow("발소리", [["dirt", "흙길"], ["leaf", "낙엽·자갈"], ["off", "끄기"]], () => S.surface, k => { S.surface = k; }, settings);
   segRow("화질", [["hd1440", "1440p (부드럽게)"], ["hd2160", "4K (선명하게)"]], () => S.quality, k => { S.quality = k; setQuality(); }, settings);
   stepper("촬영 당시 걷던 속도", () => S.vRefKmh, v => S.vRefKmh = v, 0.5, 2, 7, v => v.toFixed(1) + " km/h", settings);
   stepper("부드러움 (속도가 바뀌는 데 걸리는 시간)", () => S.tau, v => S.tau = v, 0.5, 0.5, 5, v => v.toFixed(1) + "초", settings);
@@ -76,6 +78,58 @@
     try { if (mp && mp.setPlaybackQuality) mp.setPlaybackQuality(S.quality); } catch (e) {}
   }
   setQuality();
+
+  // ---------- 소리: 자연 배경음(계속 흐름) + 걸음마다 발소리 ----------
+  // 녹음 출처: 발소리 Kenney Impact Sounds (CC0), 자연음은 hike-sounds 파일의 출처 표기 참고
+  let actx = null, master = null, SB = null, ambs = null, soundsLoading = false, lastPick = {}, stepSide = 1;
+  function initAudio() {
+    if (actx) return;
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    actx = new AC(); master = actx.createGain(); master.gain.value = 0.9; master.connect(actx.destination);
+    loadSounds();
+  }
+  async function loadSounds() {
+    if (SB || soundsLoading || !actx) return; soundsLoading = true;
+    try {
+      const src = window.__hikeSounds; if (!src) return;
+      const dec = async (u) => actx.decodeAudioData(await (await fetch(u)).arrayBuffer());
+      const out = { dirt: [], leaf: [], amb: [] };
+      for (const k of ["dirt", "leaf"]) for (const u of (src[k] || [])) { try { out[k].push(await dec(u)); } catch (e) {} }
+      for (const a of (src.amb || [])) { try { out.amb.push({ buf: await dec(a.data), gain: a.gain || 0.5 }); } catch (e) {} }
+      SB = out; applySound();
+    } finally { soundsLoading = false; }
+  }
+  const hasAmb = () => SB && SB.amb.length > 0;
+  function startAmb() {
+    if (ambs || !hasAmb()) return;
+    ambs = SB.amb.map((a, i) => {
+      const src = actx.createBufferSource(); src.buffer = a.buf; src.loop = true;
+      const g = actx.createGain(); g.gain.value = 0; src.connect(g); g.connect(master);
+      src.start(0, Math.random() * Math.max(0, a.buf.duration - 1));
+      g.gain.setTargetAtTime(a.gain, actx.currentTime, 1.2);     // 천천히 들어옴
+      return { src, g };
+    });
+  }
+  function stopAmb() { if (!ambs) return; for (const a of ambs) { try { a.g.gain.setTargetAtTime(0, actx.currentTime, 0.3); a.src.stop(actx.currentTime + 1.5); } catch (e) {} } ambs = null; }
+  function applySound() {
+    const vid = video();
+    const nature = S.sound === "nature" && S.xr;
+    if (nature && hasAmb()) { startAmb(); if (vid) vid.muted = true; }
+    else { stopAmb(); if (vid && S.xr) vid.muted = false; }
+    if (!S.xr && vid) vid.muted = false;
+  }
+  function playStep(amp) {
+    if (!actx || !SB || S.sound !== "nature" || S.surface === "off") return;
+    const pool = SB[S.surface]; if (!pool || !pool.length) return;
+    let i = Math.floor(Math.random() * pool.length); if (pool.length > 1 && i === lastPick[S.surface]) i = (i + 1) % pool.length; lastPick[S.surface] = i;
+    const src = actx.createBufferSource(); src.buffer = pool[i]; src.playbackRate.value = 0.93 + Math.random() * 0.14;
+    const g = actx.createGain(); const base = S.surface === "dirt" ? 1.0 : 0.6;
+    g.gain.value = base * clamp(0.55 + amp / 0.04, 0.55, 1.0) * (0.85 + Math.random() * 0.3);
+    stepSide = -stepSide;
+    let node = g;
+    if (actx.createStereoPanner) { const pn = actx.createStereoPanner(); pn.pan.value = 0.18 * stepSide; g.connect(pn); node = pn; }
+    src.connect(g); node.connect(master); src.start();
+  }
 
   // ---------- 3D: 영상 구 + 발밑 안내판 ----------
   let renderer, scene, camera, videoGroup, vtex, hud, hudCtx, hudTex, texOK = false, lastVideoTime = -1;
@@ -137,7 +191,8 @@
   let start = null, handsOffT = null, warnBuzz = 0;
   function update(t, dt, head, hands) {
     S.t = t;
-    det.push(t, head.y);
+    const ev = det.push(t, head.y);
+    if (ev && S.xr) playStep(ev.amp);
     hands.forEach((p, i) => { if (p) handH[i].push([t, p.x, p.y, p.z]); });
     const walking = det.walking(t);
     S.kmh = !walking ? 0 : S.walk === "treadmill" ? S.tmKmh : cadenceToKmh(det.cadence, S.baseCad) * (4.0 / 3.8);
@@ -182,10 +237,12 @@
     S.xr = true; S.yaw = null; start = null; texOK = true; lastVideoTime = -1; det = new StepDetector(); S.kmhSmooth = 0;
     vrBtn.textContent = "VR 종료"; setStatus("VR 실행 중 · 걸으면 출발해요");
     vid.pause();
+    initAudio(); if (actx && actx.state === "suspended") actx.resume();
+    applySound();
     session.addEventListener("squeeze", () => { S.yaw = null; });
     session.addEventListener("end", () => {
       S.xr = false; session = null; vrBtn.textContent = "VR 시작"; setStatus("VR 종료됨. 다시 'VR 시작'을 누르면 이어서 됩니다.");
-      const v = video(); if (v) v.playbackRate = 1; renderer.setAnimationLoop(null);
+      const v = video(); if (v) v.playbackRate = 1; renderer.setAnimationLoop(null); applySound();
     });
     renderer.setAnimationLoop(onXRFrame);
   }
@@ -247,11 +304,13 @@
     getState() { return S; },
     toggle() {
       S.on = !S.on; panel.style.display = S.on ? "" : "none";
-      if (!S.on) { if (session) session.end(); const v = video(); if (v) v.playbackRate = 1; }
+      if (!S.on) { if (session) session.end(); const v = video(); if (v) { v.playbackRate = 1; v.muted = false; } stopAmb(); }
       else requestAnimationFrame(ui);
     },
     _sim(t, dt, head, hands, yaw) { S.xr = true; if (S.yaw === null) { S.yaw = yaw || 0; start = { x: head.x, z: head.z }; } update(t, dt, head, hands || [null, null]); applyVideo(); return { kmh: S.kmh, kmhSmooth: S.kmhSmooth, rate: S.rate, warn: S.warn, steps: det.count }; },
     _hud() { if (!renderer) initScene(); drawHud(); return hudCtx.canvas.toDataURL(); },
+    _audio() { initAudio(); return { actx: !!actx, loaded: SB ? { dirt: SB.dirt.length, leaf: SB.leaf.length, amb: SB.amb.length } : null }; },
+    _step(amp) { playStep(amp || 0.02); },
     _reset() { det = new StepDetector(); S.kmhSmooth = 0; S.dist = 0; S.yaw = null; start = null; handH[0] = []; handH[1] = []; },
   };
 })();

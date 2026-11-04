@@ -12,3 +12,7 @@ Meta Quest 브라우저용 WebXR 테스트 페이지. 컨트롤러로 노 젓는
 
 ## 3D 엔진
 - three.js r128 (MIT) — `three-r128.min.js`
+
+
+## 하이킹 소리
+- 발소리: Kenney "Impact Sounds" (CC0 1.0) — footstep_grass, footstep_snow

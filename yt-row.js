@@ -22,7 +22,7 @@
   if (force === "hike" || (!force && !isApp && (/[?&#]rowvr=hike/.test(location.href) ||
       (/hik(e|ing)|trail|trek|walk|하이킹|등산|트레킹|산책|걷기/i.test(title) && !/row|로잉|조정|kayak|canoe|boat|paddl|cruise|ship|배 /i.test(title))))) {
     (async () => {
-      try { if (!window.StepDetector) await window.__rowvrRun("step-detect.js"); await window.__rowvrRun("yt-hike.js"); }
+      try { if (!window.StepDetector) await window.__rowvrRun("step-detect.js"); if (!window.__hikeSounds) { try { await window.__rowvrRun("yt-hike-sounds.js"); } catch (e) {} } await window.__rowvrRun("yt-hike.js"); }
       catch (e) { alert("하이킹 모드를 불러오지 못했습니다: " + e.message); }
     })();
     return;
