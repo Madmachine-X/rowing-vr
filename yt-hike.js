@@ -30,6 +30,8 @@
   const stat = (k) => { const b = el("div", "background:#0f1518;border-radius:8px;padding:6px 2px"); const v = el("div", "font:700 18px ui-monospace,Consolas,monospace", "-"); b.append(v, el("div", "font-size:11px;color:#8d9ba1", k)); stats.appendChild(b); return v; };
   const sSteps = stat("걸음"), sKmh = stat("km/h"), sRate = stat("영상 배속");
   panel.appendChild(stats);
+  const vrBtn = el("button", "width:100%;padding:14px;margin-bottom:12px;border-radius:10px;border:0;background:#5cc98a;color:#08140d;font-weight:700;font-size:16px;cursor:pointer", "VR 시작");
+  panel.appendChild(vrBtn);   // 화면이 작아도 보이게 맨 위쪽에
   const btnCss = "flex:1;padding:8px 4px;border-radius:8px;border:1px solid rgba(160,180,190,.25);background:#0f1518;color:#e6ecee;cursor:pointer;font:inherit;font-size:13px";
   function segRow(label, opts, get, set, parent) {
     const wrap = el("div", "margin-bottom:10px"); wrap.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin-bottom:4px", label));
@@ -63,8 +65,7 @@
   stepper("부드러움 (속도가 바뀌는 데 걸리는 시간)", () => S.tau, v => S.tau = v, 0.5, 0.5, 5, v => v.toFixed(1) + "초", settings);
   const toRow = el("button", "width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid rgba(160,180,190,.25);background:transparent;color:#f2a33a;cursor:pointer;font:inherit;font-size:13px", "로잉 모드로 바꾸기");
   settings.appendChild(toRow);
-  const vrBtn = el("button", "width:100%;padding:14px;border-radius:10px;border:0;background:#5cc98a;color:#08140d;font-weight:700;font-size:16px;cursor:pointer", "VR 시작");
-  panel.append(setBtn, settings, vrBtn);
+  panel.append(setBtn, settings);
   (document.body || document.documentElement).appendChild(panel);
   const setStatus = t => { status.textContent = t; };
   setStatus(!navigator.xr ? "이 브라우저는 VR을 지원하지 않습니다. Quest에서 열어 주세요." : "영상이 재생되는지 확인한 뒤 'VR 시작'을 누르세요.");
