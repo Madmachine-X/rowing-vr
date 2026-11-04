@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>걸음 측정 테스트</title>
+<link rel="icon" href="icon-192.png">
+<style>
+:root { --bg:#0d1114; --card:#151c20; --line:rgba(160,180,190,.16); --fg:#e6ecee; --muted:#8d9ba1; --accent:#f2a33a; --ok:#5cc98a; color-scheme:dark; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 "IBM Plex Sans KR","Malgun Gothic",sans-serif; padding:24px max(16px,env(safe-area-inset-left)); }
+main { max-width:900px; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
+h1 { margin:0; font-size:24px; }
+.sub { color:var(--muted); margin:2px 0 0; font-size:14px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
+h2 { margin:0 0 12px; font-size:13px; letter-spacing:.08em; color:var(--muted); font-weight:600; }
+.modes { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.mode { background:#0f1518; border:2px solid var(--line); border-radius:12px; padding:14px; color:var(--fg); text-align:left; cursor:pointer; font:inherit; }
+.mode b { display:block; font-size:17px; }
+.mode span { color:var(--muted); font-size:13px; }
+.mode[aria-pressed="true"] { border-color:var(--accent); background:rgba(242,163,58,.08); }
+.speed { display:none; margin-top:14px; align-items:center; gap:12px; }
+.speed.on { display:flex; }
+.speed button { width:56px; height:48px; font-size:24px; border-radius:10px; border:1px solid var(--line); background:#0f1518; color:var(--fg); cursor:pointer; }
+.speed output { font:600 24px ui-monospace,Consolas,monospace; min-width:110px; text-align:center; }
+#go { width:100%; margin-top:16px; padding:18px; font-weight:700; font-size:19px; font-family:inherit; border:0; border-radius:12px; background:var(--accent); color:#1a1206; cursor:pointer; }
+#go:disabled { opacity:.5; cursor:default; }
+button:focus-visible { outline:2px solid var(--fg); outline-offset:2px; }
+ol { margin:0; padding-left:20px; color:var(--muted); font-size:14px; display:flex; flex-direction:column; gap:4px; }
+ol b { color:var(--fg); }
+table { width:100%; border-collapse:collapse; font-size:14px; }
+th,td { padding:8px 6px; border-bottom:1px solid var(--line); text-align:left; }
+th { color:var(--muted); font-weight:500; }
+td.n { font-family:ui-monospace,Consolas,monospace; text-align:right; }
+.row-btns { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+.row-btns button { padding:10px 14px; border-radius:10px; border:1px solid var(--line); background:#0f1518; color:var(--fg); font:inherit; font-size:14px; cursor:pointer; }
+#msg { color:var(--muted); font-size:14px; min-height:1.4em; }
+@media (max-width:640px) { .modes { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>걸음 측정 테스트</h1>
+    <p class="sub">하이킹 모드를 만들기 전에, 실제로 걸음이 얼마나 정확히 잡히는지 재 봅니다.</p>
+  </div>
+
+  <section class="card">
+    <h2>무엇을 잴까요</h2>
+    <div class="modes" role="group" aria-label="측정 방식">
+      <button class="mode" data-mode="inplace" aria-pressed="true"><b>제자리 걸음</b><span>바닥에서 그 자리에 서서 걷기</span></button>
+      <button class="mode" data-mode="treadmill" aria-pressed="false"><b>러닝머신</b><span>손잡이를 잡고 걷기 (뛰기 금지)</span></button>
+      <button class="mode" data-mode="still" aria-pressed="false"><b>가만히 서기</b><span>비교용: 걷지 않고 말하거나 둘러보기</span></button>
+    </div>
+    <div class="speed" id="speedBox">
+      <span>러닝머신 속도</span>
+      <button id="spDown" aria-label="속도 낮추기">−</button>
+      <output id="spOut">3.0 km/h</output>
+      <button id="spUp" aria-label="속도 올리기">+</button>
+    </div>
+    <button id="go">측정 시작</button>
+    <div id="msg"></div>
+  </section>
+
+  <section class="card">
+    <h2>측정 순서</h2>
+    <ol>
+      <li><b>측정 시작</b>을 누르면 주변이 보이는 화면(패스스루)으로 바뀝니다.</li>
+      <li>그냥 걷기 시작하세요. 걸음이 3번 고르게 잡히면 <b>자동으로 30초</b>를 기록합니다. (가만히 서기는 3초 뒤 바로 시작)</li>
+      <li>끝나면 결과가 앞에 뜹니다. <b>트리거</b>(또는 손가락 집기)로 한 번 더 재고, <b>메타 버튼</b>으로 나옵니다.</li>
+      <li>나온 뒤 <b>파일로 저장</b>을 누르면 Quest의 다운로드 폴더에 저장되고, PC의 <b>pull-steps.bat</b>으로 가져올 수 있어요.</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <h2>측정 기록</h2>
+    <table>
+      <thead><tr><th>시간</th><th>방식</th><th style="text-align:right">걸음</th><th style="text-align:right">분당</th><th style="text-align:right">흔들림</th><th>손</th></tr></thead>
+      <tbody id="hist"></tbody>
+    </table>
+    <div class="row-btns">
+      <button id="saveAll">파일로 저장</button>
+      <button id="clearAll">기록 지우기</button>
+    </div>
+  </section>
+</main>
+
+<canvas id="hud" width="1024" height="640" hidden></canvas>
+<script src="three-r128.min.js"></script>
+<script src="step-detect.js"></script>
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const MODE_NAME = { inplace: "제자리 걸음", treadmill: "러닝머신", still: "가만히 서기" };
+const REC_SECS = 30, PRE_SECS = 4;
+let mode = "inplace", tmKmh = 3.0;
+try { const s = JSON.parse(localStorage.getItem("steps.settings") || "{}"); if (s.mode) mode = s.mode; if (s.tmKmh) tmKmh = s.tmKmh; } catch (e) {}
+
+// ---------- 2D 화면 ----------
+function syncUi() {
+  document.querySelectorAll(".mode").forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === mode));
+  $("speedBox").classList.toggle("on", mode === "treadmill");
+  $("spOut").textContent = tmKmh.toFixed(1) + " km/h";
+  try { localStorage.setItem("steps.settings", JSON.stringify({ mode, tmKmh })); } catch (e) {}
+}
+document.querySelectorAll(".mode").forEach(b => b.onclick = () => { mode = b.dataset.mode; syncUi(); });
+$("spDown").onclick = () => { tmKmh = Math.max(0.5, tmKmh - 0.5); syncUi(); };
+$("spUp").onclick = () => { tmKmh = Math.min(6, tmKmh + 0.5); syncUi(); };   // 걷기 전용: 6km/h까지만
+syncUi();
+
+function loadRecs() { try { return JSON.parse(localStorage.getItem("steps.records") || "[]"); } catch (e) { return []; } }
+function saveRecs(r) { try { localStorage.setItem("steps.records", JSON.stringify(r)); return true; } catch (e) { return false; } }
+function handLabel(r) { const s = r.summary.hands; if (!s || s.seen < 0.2) return "인식 안 됨"; return s.still > 0.6 ? "고정(손잡이)" : "흔듦"; }
+function renderHist() {
+  const recs = loadRecs(), tb = $("hist"); tb.innerHTML = "";
+  if (!recs.length) { tb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">아직 기록이 없어요.</td></tr>'; return; }
+  for (const r of recs.slice().reverse()) {
+    const tr = document.createElement("tr"), d = new Date(r.date);
+    const cells = [d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+      MODE_NAME[r.mode] + (r.mode === "treadmill" ? ` ${r.treadmillKmh}km/h` : ""),
+      r.summary.steps, r.summary.cadence ? Math.round(r.summary.cadence) : "-", (r.summary.ampCm || 0).toFixed(1) + "cm", handLabel(r)];
+    cells.forEach((c, i) => { const td = document.createElement("td"); td.textContent = c; if (i >= 2 && i <= 4) td.className = "n"; tr.appendChild(td); });
+    tb.appendChild(tr);
+  }
+}
+renderHist();
+function download(name, obj) {
+  const blob = new Blob([JSON.stringify(obj)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+$("saveAll").onclick = () => {
+  const recs = loadRecs(); if (!recs.length) { $("msg").textContent = "저장할 기록이 없어요."; return; }
+  const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
+  download(`steps-${stamp}.json`, { app: "rowing-vr steps", version: 1, records: recs });
+  $("msg").textContent = `기록 ${recs.length}개를 다운로드 폴더에 저장했어요.`;
+};
+$("clearAll").onclick = () => { if (!loadRecs().length) return; saveRecs([]); renderHist(); $("msg").textContent = "기록을 지웠어요."; };
+
+// ---------- 측정 로직 (XR과 분리: 시간과 머리·손 위치만 받음) ----------
+const M = window.__steps = {};
+function newRun() {
+  return { det: new StepDetector(), phase: "wait", t0: null, recT0: null, start: null, yaw0: 0,
+           buf: [], rec: [], lastRec: -1, graph: [], marks: [], recSteps: [], hands: [{}, {}], result: null, waitMsgT: 0 };
+}
+let R = newRun();
+M.reset = () => { R = newRun(); };
+M.state = () => R;
+
+// 손 상태: 최근 1초 동안 손이 움직인 범위가 5cm 안이면 '고정(손잡이)', 넘으면 '흔듦' (떨림에 강하게)
+function handTrack(h, t, p) {
+  h.hist = h.hist || [];
+  if (!p) return;
+  h.hist.push([t, p.x, p.y, p.z]); while (h.hist.length && t - h.hist[0][0] > 1) h.hist.shift();
+  h.seenT = t;
+}
+function handState(h, t) {
+  if (!h.hist || !h.hist.length || t - h.seenT > 0.5) return null;
+  let r = 0; for (let k = 1; k < 4; k++) { let lo = Infinity, hi = -Infinity; for (const q of h.hist) { lo = Math.min(lo, q[k]); hi = Math.max(hi, q[k]); } r = Math.max(r, hi - lo); }
+  return r < 0.05 ? "still" : "move";
+}
+
+M.tick = (t, head, hands, yaw) => {   // head {x,y,z}, hands [{x,y,z}|null, …], yaw: 시작 방향(라디안)
+  if (R.t0 === null) { R.t0 = t; R.start = { x: head.x, z: head.z }; R.yaw0 = yaw || 0; }
+  const ev = R.det.push(t, head.y);
+  handTrack(R.hands[0], t, hands[0]); handTrack(R.hands[1], t, hands[1]);
+  const lp = R.det.signal();
+  R.graph.push([t, lp]); while (R.graph.length && t - R.graph[0][0] > 6) R.graph.shift();
+  if (ev) { R.marks.push(ev.t); while (R.marks.length && t - R.marks[0] > 6) R.marks.shift(); }
+  // 시작점에서 얼마나 밀렸나 (앞뒤 = 처음 바라본 방향 기준, 뒤로 밀리면 -)
+  const dx = head.x - R.start.x, dz = head.z - R.start.z;
+  const fwd = -(dx * Math.sin(R.yaw0) + dz * Math.cos(R.yaw0));
+  R.drift = { dist: Math.hypot(dx, dz), fwd };
+  // 30Hz로 기록 (시작 전 4초도 보관해 둠)
+  if (t - R.lastRec >= 1 / 30) {
+    R.lastRec = t;
+    const f = v => v ? [+v.x.toFixed(4), +v.y.toFixed(4), +v.z.toFixed(4)] : null;
+    const row = [+(t - R.t0).toFixed(3), f(head), f(hands[0]), f(hands[1]), +lp.toFixed(5)];
+    if (R.phase === "rec") R.rec.push(row);
+    else { R.buf.push(row); while (R.buf.length && row[0] - R.buf[0][0] > PRE_SECS) R.buf.shift(); }
+  }
+  if (ev && R.phase === "rec") R.recSteps.push(+(ev.t - R.t0).toFixed(3));
+  if (R.phase === "wait") {
+    const go = mode === "still" ? t - R.t0 > 3 : R.det.confirmed;
+    if (go) {
+      R.phase = "rec"; R.recT0 = t;
+      R.rec = R.buf.slice(); R.buf = [];
+      if (mode !== "still") R.recSteps = R.det.steps.filter(s => t - s < PRE_SECS + 1).map(s => +(s - R.t0).toFixed(3));
+      R.stepsAtStart = R.det.count - R.recSteps.length;
+      R.handStill = 0; R.handSeen = 0; R.handN = 0;
+    }
+  } else if (R.phase === "rec") {
+    R.handN++;
+    const s = [handState(R.hands[0], t), handState(R.hands[1], t)].filter(Boolean);
+    if (s.length) { R.handSeen++; if (s.every(x => x === "still")) R.handStill++; }
+    if (t - R.recT0 >= REC_SECS) finish(t);
+  }
+};
+function finish(t) {
+  R.phase = "done";
+  const ivs = []; for (let i = 1; i < R.recSteps.length; i++) ivs.push(R.recSteps[i] - R.recSteps[i - 1]);
+  const sorted = ivs.slice().sort((a, b) => a - b), med = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+  const secs = R.rec.length ? R.rec[R.rec.length - 1][0] - R.rec[0][0] : REC_SECS;
+  const cad = med ? 60 / med : 0;
+  const summary = {
+    seconds: +secs.toFixed(1), steps: R.recSteps.length, cadence: +cad.toFixed(1),
+    ampCm: +(R.det.ampAvg * 100).toFixed(2),
+    estKmh: mode === "inplace" ? +cadenceToKmh(cad).toFixed(2) : null,
+    intervalSpread: sorted.length >= 4 ? +((sorted[Math.floor(sorted.length * 0.9)] - sorted[Math.floor(sorted.length * 0.1)]) / (med || 1)).toFixed(2) : null,
+    drift: { distCm: +(R.drift.dist * 100).toFixed(1), fwdCm: +(R.drift.fwd * 100).toFixed(1) },
+    hands: { seen: R.handN ? +(R.handSeen / R.handN).toFixed(2) : 0, still: R.handSeen ? +(R.handStill / R.handSeen).toFixed(2) : 0 },
+  };
+  const rec = { date: new Date().toISOString(), mode, treadmillKmh: mode === "treadmill" ? tmKmh : null, summary,
+                stepTimes: R.recSteps, trace: R.rec, ua: navigator.userAgent, traceCols: ["t", "head[x,y,z]", "handL[x,y,z]", "handR[x,y,z]", "filteredBob"] };
+  R.result = rec;
+  const recs = loadRecs(); recs.push(rec);
+  while (recs.length > 30) recs.shift();                    // 오래된 것부터 정리 (용량)
+  if (!saveRecs(recs)) { recs.splice(0, recs.length - 5); saveRecs(recs); }
+  renderHist();
+}
+
+// ---------- 헤드셋 앞 안내판 ----------
+const hud = $("hud"), g = hud.getContext("2d");
+M.drawHud = (t) => {
+  const W = hud.width, H = hud.height;
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = "rgba(13,17,20,0.86)"; roundRect(0, 0, W, H, 36); g.fill();
+  g.font = "600 34px sans-serif"; g.fillStyle = "#8d9ba1"; g.textBaseline = "top";
+  g.fillText(MODE_NAME[mode] + (mode === "treadmill" ? `  ·  ${tmKmh.toFixed(1)} km/h` : ""), 44, 34);
+  // 상태 줄
+  let status, col = "#e6ecee";
+  if (R.phase === "wait") {
+    if (mode === "still") status = "가만히 서 계세요. 곧 시작합니다";
+    else { status = R.det.cand.length ? "걸음을 확인하는 중…" : "걷기 시작하세요"; if (R.t0 !== null && t - R.t0 > 40 && !R.det.cand.length) status = "걸음이 안 잡혀요. 조금 더 크게 걸어 보세요"; }
+    col = "#f2a33a";
+  } else if (R.phase === "rec") { status = `기록 중  ${Math.max(0, REC_SECS - (t - R.recT0)).toFixed(0)}초 남음`; col = "#5cc98a"; }
+  else status = "완료!  트리거: 다시 재기  ·  메타 버튼: 나가기";
+  g.font = "700 46px sans-serif"; g.fillStyle = col; g.fillText(status, 44, 86);
+  // 숫자들
+  const s = R.result ? R.result.summary : null;
+  const steps = s ? s.steps : (R.phase === "rec" ? R.recSteps.length : R.det.count);
+  const cad = s ? s.cadence : R.det.cadence;
+  const kmh = mode === "treadmill" ? tmKmh : cadenceToKmh(cad);
+  const hs = [handState(R.hands[0], t), handState(R.hands[1], t)].filter(Boolean);
+  const handTxt = !hs.length ? "인식 안 됨" : hs.every(x => x === "still") ? "고정 (손잡이)" : hs.every(x => x === "move") ? "흔드는 중" : "한 손만 고정";
+  const drift = R.drift ? R.drift : { dist: 0, fwd: 0 };
+  const cells = [["걸음", String(steps)], ["분당 걸음", cad ? Math.round(cad) + "" : "-"], [mode === "treadmill" ? "설정 속도" : "추정 속도", kmh ? kmh.toFixed(1) + " km/h" : "-"],
+                 ["흔들림", (R.det.ampAvg * 100).toFixed(1) + " cm"], ["손", handTxt], ["밀린 거리", (drift.dist * 100).toFixed(0) + " cm" + (drift.fwd < -0.15 ? " (뒤로)" : "")]];
+  cells.forEach(([k, v], i) => {
+    const x = 44 + (i % 3) * 318, y = 168 + Math.floor(i / 3) * 104;
+    g.font = "500 26px sans-serif"; g.fillStyle = "#8d9ba1"; g.fillText(k, x, y);
+    g.font = "700 44px sans-serif"; g.fillStyle = (k === "밀린 거리" && drift.dist > 0.4) ? "#ff7a59" : "#e6ecee"; g.fillText(v, x, y + 34);
+  });
+  // 머리 흔들림 그래프 (최근 6초), 걸음은 주황 점
+  const gx = 44, gy = 392, gw = W - 88, gh = 200;
+  g.strokeStyle = "rgba(160,180,190,0.25)"; g.lineWidth = 2; g.strokeRect(gx, gy, gw, gh);
+  if (R.graph.length > 2) {
+    const tEnd = R.graph[R.graph.length - 1][0], sc = gh / 2 / Math.max(0.006, R.det.ampAvg * 1.2);
+    const X = tt => gx + gw - (tEnd - tt) / 6 * gw, Y = v => gy + gh / 2 - Math.max(-gh / 2, Math.min(gh / 2, v * sc));
+    g.beginPath(); R.graph.forEach(([tt, v], i) => i ? g.lineTo(X(tt), Y(v)) : g.moveTo(X(tt), Y(v)));
+    g.strokeStyle = "#4fb3c8"; g.lineWidth = 4; g.stroke();
+    g.fillStyle = "#f2a33a";
+    for (const m of R.marks) { if (tEnd - m > 6) continue; let v = 0; for (const p of R.graph) if (p[0] >= m) { v = p[1]; break; } g.beginPath(); g.arc(X(m), Y(v), 10, 0, Math.PI * 2); g.fill(); }
+  }
+  g.font = "500 22px sans-serif"; g.fillStyle = "#8d9ba1"; g.fillText("머리 위아래 흔들림 · 주황 점 = 걸음", gx + 12, gy + gh - 32);
+};
+function roundRect(x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+
+// ---------- WebXR (패스스루 우선) ----------
+let renderer, scene, camera, panel, tex, session = null;
+function setup3d() {
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(1); renderer.setClearColor(0x000000, 0);
+  renderer.xr.enabled = true; renderer.xr.setReferenceSpaceType("local-floor");
+  renderer.domElement.style.display = "none"; document.body.appendChild(renderer.domElement);
+  scene = new THREE.Scene(); camera = new THREE.PerspectiveCamera(70, 1, 0.05, 50);
+  tex = new THREE.CanvasTexture(hud); tex.minFilter = THREE.LinearFilter;
+  panel = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.625), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false }));
+  scene.add(panel);
+}
+function placePanel(pos, yaw) {   // 머리 앞 1.3m, 눈높이보다 조금 아래
+  panel.position.set(pos.x - Math.sin(yaw) * 1.3, pos.y - 0.25, pos.z - Math.cos(yaw) * 1.3);
+  panel.rotation.set(-0.15, yaw, 0, "YXZ");
+}
+const yawOf = q => { const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w), "YXZ"); return e.y; };
+
+async function start() {
+  if (!navigator.xr) { $("msg").textContent = "이 브라우저는 VR을 지원하지 않아요. Quest 브라우저에서 열어 주세요."; return; }
+  if (!renderer) setup3d();
+  let s = null, ar = false;
+  const opt = { optionalFeatures: ["local-floor", "hand-tracking"] };
+  try { if (await navigator.xr.isSessionSupported("immersive-ar")) { s = await navigator.xr.requestSession("immersive-ar", opt); ar = true; } } catch (e) {}
+  if (!s) { try { s = await navigator.xr.requestSession("immersive-vr", opt); } catch (e) { $("msg").textContent = "VR을 시작하지 못했어요: " + e.message; return; } }
+  session = s; M.reset(); M.ar = ar;
+  if (!ar) { scene.background = new THREE.Color(0x10161a); const grid = new THREE.GridHelper(10, 20, 0x335566, 0x223344); grid.name = "grid"; if (!scene.getObjectByName("grid")) scene.add(grid); }
+  else scene.background = null;
+  let placed = false, hudT = 0;
+  s.addEventListener("select", () => { if (R.phase === "done") { M.reset(); placed = false; } });
+  s.addEventListener("squeeze", () => { placed = false; });
+  s.addEventListener("end", () => { session = null; renderer.setAnimationLoop(null); renderHist(); $("msg").textContent = R.result ? "측정이 끝났어요. 아래 '파일로 저장'을 눌러 주세요." : ""; });
+  await renderer.xr.setSession(s);
+  renderer.setAnimationLoop((time, frame) => {
+    if (!frame) return;
+    const ref = renderer.xr.getReferenceSpace(), pose = frame.getViewerPose(ref);
+    if (!pose) return;
+    const t = time / 1000, p = pose.transform.position, yaw = yawOf(pose.transform.orientation);
+    const hands = [null, null];
+    for (const src of s.inputSources) {
+      const i = src.handedness === "left" ? 0 : src.handedness === "right" ? 1 : -1; if (i < 0) continue;
+      let hp = null;
+      if (src.hand && frame.getJointPose) { const w = src.hand.get("wrist"); const jp = w && frame.getJointPose(w, ref); if (jp) hp = jp.transform.position; }
+      else if (src.gripSpace) { const gp = frame.getPose(src.gripSpace, ref); if (gp) hp = gp.transform.position; }
+      if (hp) hands[i] = { x: hp.x, y: hp.y, z: hp.z };
+    }
+    M.tick(t, { x: p.x, y: p.y, z: p.z }, hands, yaw);
+    if (!placed) { placePanel(p, yaw); placed = true; }
+    if (t - hudT > 1 / 20) { hudT = t; M.drawHud(t); tex.needsUpdate = true; }   // 안내판은 초당 20번만 다시 그림
+    renderer.render(scene, camera);
+  });
+}
+$("go").onclick = () => { $("msg").textContent = ""; start(); };
+})();
+</script>
+</body>
+</html>
