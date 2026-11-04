@@ -113,6 +113,20 @@ h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.08em
   </section>
 
   <section class="card" style="grid-column: 1 / -1">
+    <h2>유튜브 영상으로 걷기 (하이킹)</h2>
+    <div class="ytrow">
+      <input id="hkUrl" type="url" value="https://www.youtube.com/watch?v=64alx-qUnUI" aria-label="하이킹 유튜브 영상 주소" autocomplete="off">
+      <a id="hkGo" class="ytgo" style="background:#5cc98a;color:#08140d" href="https://www.youtube.com/watch?v=64alx-qUnUI&amp;rowvr=hike" target="_blank" rel="noopener">유튜브에서 열기</a>
+    </div>
+    <ol class="howto" style="margin-top:12px">
+      <li><b>유튜브에서 열기</b> → 즐겨찾기 <b>로잉VR</b>을 한 번 누르면 초록색 <b>하이킹 VR</b> 패널이 뜹니다. (로잉과 같은 즐겨찾기예요) → <b>VR 시작</b></li>
+      <li>패널에서 <b>제자리 걸음</b> 또는 <b>러닝머신</b>을 고르세요. 러닝머신은 실제 러닝머신과 같은 속도로 맞춰 주세요. 걷기만 지원해요(최대 6 km/h).</li>
+      <li>걸음이 3번 고르게 잡히면 영상이 출발하고, 멈추면 1초쯤 뒤에 섭니다. 발밑을 내려다보면 속도와 걸음 수가 보여요.</li>
+      <li><b>러닝머신은 손잡이를 꼭 잡고</b> 안전 클립을 다세요. 뒤로 밀리거나 두 손을 놓으면 빨간 경고와 진동이 옵니다.</li>
+    </ol>
+  </section>
+
+  <section class="card" style="grid-column: 1 / -1">
     <h2>로잉머신에서 쓰는 법</h2>
     <ol class="howto">
       <li><b>발을 먼저 묶고</b> 헤드셋을 쓰세요. 바닥 경계는 로잉머신이 들어가게 넉넉히 잡아 주세요.</li>
@@ -182,6 +196,14 @@ h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.08em
     if (/^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//.test(v)) { go.href = v; try { localStorage.setItem("rowvr.ytUrl", v); } catch (e) {} }
   };
   yt.addEventListener("input", syncYt); syncYt();
+  // 하이킹 주소: 뒤에 rowvr=hike 표시를 붙여 즐겨찾기가 하이킹 모드로 열리게 함
+  const hk = $("hkUrl"), hkGo = $("hkGo");
+  try { const saved = localStorage.getItem("rowvr.hikeUrl"); if (saved) hk.value = saved; } catch (e) {}
+  const syncHk = () => {
+    const v = hk.value.trim();
+    if (/^https?:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//.test(v)) { hkGo.href = v + (v.includes("?") ? "&" : "?") + "rowvr=hike"; try { localStorage.setItem("rowvr.hikeUrl", v); } catch (e) {} }
+  };
+  hk.addEventListener("input", syncHk); syncHk();
 
   // ---------- 앱 설치 ----------
   let deferred = null;

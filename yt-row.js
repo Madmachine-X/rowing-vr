@@ -9,6 +9,25 @@
   "use strict";
   if (window.__rowVR) { window.__rowVR.toggle(); return; }
 
+  // ---------- 하이킹 영상이면 하이킹 모드로 ----------
+  if (!window.__rowvrRun) window.__rowvrRun = async (f) => {
+    let pol = window.__rowvrPol;
+    if (!pol && window.trustedTypes && trustedTypes.createPolicy) pol = window.__rowvrPol = trustedTypes.createPolicy("rowvr2" + Date.now(), { createScript: s => s });
+    const c = await (await fetch("https://madmachine-x.github.io/rowing-vr/" + f + "?" + Date.now())).text();
+    (0, eval)(pol ? pol.createScript(c) : c);
+  };
+  const force = window.__rowvrForce; window.__rowvrForce = null;
+  const isApp = !!document.getElementById("rowvr-panel-host");
+  const title = document.title || "";
+  if (force === "hike" || (!force && !isApp && (/[?&#]rowvr=hike/.test(location.href) ||
+      (/hik(e|ing)|trail|trek|walk|하이킹|등산|트레킹|산책|걷기/i.test(title) && !/row|로잉|조정|kayak|canoe|boat|paddl|cruise|ship|배 /i.test(title))))) {
+    (async () => {
+      try { if (!window.StepDetector) await window.__rowvrRun("step-detect.js"); await window.__rowvrRun("yt-hike.js"); }
+      catch (e) { alert("하이킹 모드를 불러오지 못했습니다: " + e.message); }
+    })();
+    return;
+  }
+
   // ======================================================================
   // 상태
   // ======================================================================
@@ -77,6 +96,11 @@
   const closeBtn = el("button", btnCss + ";width:100%", "패널 닫기");
   closeBtn.onclick = () => api.toggle();
   settings.appendChild(closeBtn);
+  if (!APP) {
+    const toHike = el("button", btnCss + ";width:100%;margin-top:6px;color:#5cc98a", "하이킹 모드로 바꾸기");
+    toHike.onclick = async () => { api.toggle(); panel.remove(); window.__rowVR = null; window.__rowvrForce = "hike"; try { await window.__rowvrRun("yt-row.js"); } catch (e) { alert(e.message); } };
+    settings.appendChild(toHike);
+  }
 
   const setBtn = el("button", btnCss + ";width:100%;margin-bottom:8px", "설정 열기 ▾");
   setBtn.onclick = () => { const open = settings.style.display === "none"; settings.style.display = open ? "block" : "none"; setBtn.textContent = open ? "설정 닫기 ▴" : "설정 열기 ▾"; };
