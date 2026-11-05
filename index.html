@@ -131,7 +131,7 @@ h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.08em
     <ol class="howto">
       <li><b>발을 먼저 묶고</b> 헤드셋을 쓰세요. 바닥 경계는 로잉머신이 들어가게 넉넉히 잡아 주세요.</li>
       <li>컨트롤러 없이 <b>핸들만 잡고 저어도</b> 머리 움직임으로 인식합니다. 컨트롤러를 핸들에 묶거나 손 인식이 잡히면 더 정확해져요.</li>
-      <li>VR이 시작되면 <b>보고 있는 방향이 정면</b>이 됩니다. 앞을 보고 시작하세요. (그립 버튼으로 다시 맞춤)</li>
+      <li>VR이 시작되면 <b>보고 있는 방향이 배의 앞쪽</b>이 됩니다. (그립 버튼으로 다시 맞춤) 영상 속 진행 방향이 어긋나 있으면, 영상에서 <b>배가 나아가는 쪽을 바라보고 B(또는 Y) 버튼</b>을 누르세요. 영상마다 기억해요.</li>
       <li>멈추려면 <b>트리거를 당기거나 손을 들어 올려</b> 노를 물에 박으세요.</li>
     </ol>
   </section>
@@ -184,6 +184,7 @@ h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: 0.08em
     const mins = Math.floor(vid.duration / 60), secs = Math.round(vid.duration % 60);
     $("vInfo").textContent = `${w}×${h} · ${mins}:${String(secs).padStart(2, "0")}` + (fmt ? ` · ${why}` : r < 1.7 || r > 2.3 ? " · VR 영상이 아닐 수 있어요" : " · 형식은 오른쪽에서 골라 주세요");
     if (fmt && window.__rowVR && window.__rowVR.setFormat) window.__rowVR.setFormat(fmt);
+    if (window.__rowVR && window.__rowVR.reloadVideoYaw) window.__rowVR.reloadVideoYaw();   // 이 영상에 맞춰 둔 방향 불러오기
     vid.currentTime = Math.min(5, vid.duration / 3);
   });
   vid.addEventListener("error", () => { $("vInfo").textContent = "이 영상을 재생할 수 없습니다. MP4(H.264) 파일인지 확인해 주세요."; });

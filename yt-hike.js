@@ -19,6 +19,10 @@
   const video = () => document.querySelector("video.html5-main-video") || document.querySelector("video");
   const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
   let det = new StepDetector();
+  const vidKey = () => { try { return "y:" + (new URLSearchParams(location.search).get("v") || location.pathname); } catch (e) { return "y:"; } };
+  const loadVYaw = () => { try { return +(localStorage.getItem("rowvr.vyaw." + vidKey()) || 0); } catch (e) { return 0; } };
+  const saveVYaw = () => { try { localStorage.setItem("rowvr.vyaw." + vidKey(), String(S.vYaw)); } catch (e) {} };
+  S.vYaw = loadVYaw();
 
   // ---------- 패널 ----------
   const el = (tag, css, text) => { const e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; };
@@ -50,7 +54,7 @@
     up.onclick = () => { set(clamp(+(get() + step).toFixed(2), lo, hi)); save(); paint(); };
     row.append(dn, out, up); wrap.appendChild(row); (parent || panel).appendChild(wrap); paint(); return wrap;
   }
-  let tmBox, cadBox;
+  let tmBox, cadBox, paintYaw = () => {};
   segRow("걷는 방식", [["inplace", "제자리 걸음"], ["treadmill", "러닝머신"]], () => S.walk, k => { S.walk = k; showWalk(); });
   tmBox = stepper("러닝머신 속도 (걷기 전용, 최대 6)", () => S.tmKmh, v => S.tmKmh = v, 0.5, 0.5, 6, v => v.toFixed(1) + " km/h");
   cadBox = stepper("평소 걸음 빠르기 (이 빠르기면 4 km/h쯤)", () => S.baseCad, v => S.baseCad = v, 5, 70, 140, v => v + " 걸음/분");
@@ -64,6 +68,14 @@
   segRow("발소리", [["gravel", "자갈길"], ["dirt", "흙길"], ["leaf", "낙엽"], ["off", "끄기"]], () => S.surface, k => { S.surface = k; }, settings);
   segRow("계곡물 소리", [["true", "켜기"], ["false", "끄기"]], () => S.stream, k => { S.stream = k === "true"; updateAmbGains(); }, settings);
   segRow("장면 부드럽게 (느리게 걸을 때 끊김 줄임)", [["true", "켜기"], ["false", "끄기"]], () => S.blend, k => { S.blend = k === "true"; }, settings);
+  (() => {   // 영상 방향: 영상 속 진행 방향을 정면으로
+    const wrap = el("div", "margin-bottom:10px"); wrap.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin-bottom:4px", "영상 방향 (영상 속 길 방향을 정면으로) · VR 안에서는 B/Y 버튼·스틱"));
+    const row = el("div", "display:flex;gap:6px;align-items:center"); const out = el("div", "flex:1.2;text-align:center;font:700 15px ui-monospace,Consolas,monospace");
+    paintYaw = () => { let d = Math.round(S.vYaw * 180 / Math.PI) % 360; if (d > 180) d -= 360; if (d <= -180) d += 360; out.textContent = (d > 0 ? "+" : "") + d + "°"; };
+    const b = (t, f) => { const x = el("button", btnCss, t); x.onclick = () => { f(); paintYaw(); saveVYaw(); }; return x; };
+    row.append(b("◀ 15°", () => S.vYaw += Math.PI / 12), out, b("15° ▶", () => S.vYaw -= Math.PI / 12), b("0°", () => S.vYaw = 0));
+    wrap.appendChild(row); settings.appendChild(wrap); paintYaw();
+  })();
   segRow("화질", [["hd1440", "1440p (부드럽게)"], ["hd2160", "4K (선명하게)"]], () => S.quality, k => { S.quality = k; setQuality(); }, settings);
   stepper("촬영 당시 걷던 속도", () => S.vRefKmh, v => S.vRefKmh = v, 0.5, 2, 7, v => v.toFixed(1) + " km/h", settings);
   stepper("부드러움 (속도가 바뀌는 데 걸리는 시간)", () => S.tau, v => S.tau = v, 0.5, 0.5, 5, v => v.toFixed(1) + "초", settings);
@@ -265,7 +277,7 @@
   function haptic(v, ms) { for (const g of pads) { const h = g.hapticActuators && g.hapticActuators[0]; if (h && h.pulse) h.pulse(v, ms).catch(() => {}); } }
 
   // ---------- VR 세션 ----------
-  let session = null, headPos = null, lastT = 0, hudT = 0;
+  let session = null, headPos = null, lastT = 0, hudT = 0, bPrev = false, yawDirty = 0;
   async function startVR() {
     if (session) { session.end(); return; }
     const vid = video(); if (!vid) { setStatus("유튜브 영상을 찾지 못했습니다. 영상 페이지에서 실행해 주세요."); return; }
@@ -299,11 +311,16 @@
       const dir = new T.Vector3(0, 0, -1).applyQuaternion(new T.Quaternion().setFromRotationMatrix(xrCam.matrixWorld));
       S.yaw = Math.atan2(-dir.x, -dir.z); start = { x: headPos.x, z: headPos.z };
     }
-    videoGroup.position.copy(headPos); videoGroup.rotation.set(0, S.yaw || 0, 0);
+    videoGroup.position.copy(headPos); videoGroup.rotation.set(0, (S.yaw || 0) + S.vYaw, 0);
     // 손: 손 인식이면 손목, 아니면 컨트롤러
     const ref = renderer.xr.getReferenceSpace(), hands = [null, null]; pads = [];
+    let bNow = false, stickX = 0;
     for (const src of session.inputSources) {
-      if (src.gamepad) pads.push(src.gamepad);
+      if (src.gamepad) {
+        pads.push(src.gamepad); const gp = src.gamepad;
+        if (!src.hand && gp.buttons[5] && gp.buttons[5].pressed) bNow = true;
+        if (gp.axes && gp.axes.length >= 4 && Math.abs(gp.axes[2]) > Math.abs(stickX)) stickX = gp.axes[2];
+      }
       const i = src.handedness === "left" ? 0 : src.handedness === "right" ? 1 : -1; if (i < 0) continue;
       let p = null;
       try {
@@ -312,6 +329,13 @@
       } catch (e) {}
       if (p) hands[i] = { x: p.x, y: p.y, z: p.z };
     }
+    // 스틱 좌우 = 영상 돌리기, B/Y = 지금 보는 쪽을 정면(길 방향)으로
+    if (Math.abs(stickX) > 0.35) { S.vYaw -= stickX * dt * 1.0; yawDirty = t; } else if (yawDirty && t - yawDirty > 0.5) { yawDirty = 0; saveVYaw(); paintYaw(); }
+    if (bNow && !bPrev && S.yaw !== null) {
+      const dir = new T.Vector3(0, 0, -1).applyQuaternion(new T.Quaternion().setFromRotationMatrix(xrCam.matrixWorld));
+      S.vYaw += S.yaw - Math.atan2(-dir.x, -dir.z); S.vYaw = Math.atan2(Math.sin(S.vYaw), Math.cos(S.vYaw)); saveVYaw(); paintYaw(); haptic(0.5, 80);
+    }
+    bPrev = bNow;
     update(t, dt, { x: headPos.x, y: headPos.y, z: headPos.z }, hands);
     applyVideo();
     // 안내판: 정면 아래쪽(내려다보면 보임), 머리를 천천히 따라감

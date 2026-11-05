@@ -43,6 +43,11 @@
   };
   try { Object.assign(S, JSON.parse(localStorage.getItem("rowvr.yt3") || "{}")); } catch (e) {}
   const save = () => { try { localStorage.setItem("rowvr.yt3", JSON.stringify({ mode: S.mode, tau: S.tau, vRef: S.vRef, power: S.power, format: S.format, quality: S.quality, water: S.water, blend: S.blend })); } catch (e) {} };
+  // 영상 방향 보정: 영상 속 진행 방향을 배의 앞쪽에 맞춤. 영상마다 따로 기억
+  const vidKey = () => { const v = document.querySelector("video.html5-main-video") || document.querySelector("video"); if (document.getElementById("rowvr-panel-host")) return "f:" + ((v && v.dataset.fname) || ""); try { return "y:" + (new URLSearchParams(location.search).get("v") || location.pathname); } catch (e) { return "y:"; } };
+  const loadVYaw = () => { try { return +(localStorage.getItem("rowvr.vyaw." + vidKey()) || 0); } catch (e) { return 0; } };
+  const saveVYaw = () => { try { localStorage.setItem("rowvr.vyaw." + vidKey(), String(S.vYaw)); } catch (e) {} };
+  S.vYaw = 0;
   const video = () => document.querySelector("video.html5-main-video") || document.querySelector("video");
   const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
   const smooth = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
@@ -78,6 +83,14 @@
   if (!document.getElementById("rowvr-panel-host")) segRow("화질", [["hd1440", "1440p (부드럽게)"], ["hd2160", "4K (선명하게)"]], () => S.quality, k => { S.quality = k; setQuality(); });
   segRow("장면 부드럽게 (느릴 때 끊김 줄임)", [["true", "켜기"], ["false", "끄기"]], () => S.blend, k => { S.blend = k === "true"; });
   segRow("소리", [["true", "물소리"], ["false", document.getElementById("rowvr-panel-host") ? "영상 원래 소리" : "유튜브 소리"]], () => S.water, k => { S.water = k === "true"; applySound(); });
+  // 영상 방향 줄: ◀ 각도 ▶ 맞춤 초기화
+  settings.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin-bottom:4px", "영상 방향 (영상 속 진행 방향을 배 앞쪽으로) · VR 안에서는 B/Y 버튼·스틱"));
+  const yawRow = el("div", "display:grid;grid-template-columns:1fr 1.4fr 1fr 1fr;gap:6px;margin-bottom:10px;align-items:center");
+  const yawOut = el("div", "text-align:center;font:600 15px ui-monospace,Consolas,monospace");
+  const paintYaw = () => { let d = Math.round(S.vYaw * 180 / Math.PI) % 360; if (d > 180) d -= 360; if (d <= -180) d += 360; yawOut.textContent = (d > 0 ? "+" : "") + d + "°"; };
+  const yb = (t, f) => { const b = el("button", btnCss, t); b.onclick = () => { f(); paintYaw(); saveVYaw(); }; return b; };
+  yawRow.append(yb("◀ 15°", () => S.vYaw += Math.PI / 12), yawOut, yb("15° ▶", () => S.vYaw -= Math.PI / 12), yb("0°", () => S.vYaw = 0));
+  settings.appendChild(yawRow); S.vYaw = loadVYaw(); paintYaw();
   const paintMode = segRow("영상 속도 반응 (VR 안에서는 A 버튼)", [["smooth", "부드럽게"], ["instant", "즉각"]], () => S.mode, k => { S.mode = k; });
   const slider = (label, min, max, step, get, set, fmt) => {
     const wrap = el("div", "margin-bottom:6px");
@@ -93,7 +106,7 @@
   slider("부드러움", 0.5, 8, 0.5, () => S.tau, v => S.tau = v, v => v.toFixed(1) + "초");
   slider("당기는 힘", 0.3, 3, 0.1, () => S.power, v => S.power = v, v => v.toFixed(1) + "×");
   settings.appendChild(el("div", "font-size:12px;color:#8d9ba1;margin:6px 0 8px",
-    "VR 안에서: 컨트롤러를 핸들처럼 모아 쥐고 팔을 뻗었다가 몸 쪽으로 당기세요. 머리·컨트롤러·손 인식을 함께 써서, 로잉머신에선 컨트롤러 없이 핸들만 잡고 저어도 됩니다. 멈추려면 트리거를 당기거나 손을 들어 올려 노를 물에 박으세요. 그립 버튼 = 정면 다시 맞추기, A 버튼 = 반응 방식, 메타 버튼 = 종료."));
+    "VR 안에서: 컨트롤러를 핸들처럼 모아 쥐고 팔을 뻗었다가 몸 쪽으로 당기세요. 머리·컨트롤러·손 인식을 함께 써서, 로잉머신에선 컨트롤러 없이 핸들만 잡고 저어도 됩니다. 멈추려면 트리거를 당기거나 손을 들어 올려 노를 물에 박으세요. 그립 버튼 = 정면 다시 맞추기, A 버튼 = 반응 방식, B/Y 버튼 = 지금 보는 쪽을 배 앞쪽으로(영상 방향 맞추기), 스틱 좌우 = 영상 돌리기, 메타 버튼 = 종료."));
   const closeBtn = el("button", btnCss + ";width:100%", "패널 닫기");
   closeBtn.onclick = () => api.toggle();
   settings.appendChild(closeBtn);
@@ -758,7 +771,7 @@
     worldGroup.position.copy(pos); worldGroup.rotation.set(0, S.yaw, 0);
   }
 
-  let headPos = null;
+  let headPos = null, headQuat = null;
   function onXRFrame(t, frame) {
     if (!session || !frame) return;
     const T = window.THREE;
@@ -766,9 +779,11 @@
     const xrCam = renderer.xr.getCamera(camera);
     if (!headPos) headPos = new T.Vector3();
     headPos.setFromMatrixPosition(xrCam.matrixWorld);
+    if (!headQuat) headQuat = new T.Quaternion();
+    headQuat.setFromRotationMatrix(xrCam.matrixWorld);
     if (S.yaw === null && headPos.lengthSq() > 0) recenter(xrCam);
     // 배경 영상은 머리 위치를 따라감(무한히 먼 풍경), 방향은 정면 기준
-    videoGroup.position.copy(headPos); videoGroup.rotation.set(0, S.yaw || 0, 0);
+    videoGroup.position.copy(headPos); videoGroup.rotation.set(0, (S.yaw || 0) + S.vYaw, 0);
 
     readControllers(frame, now);
     step(now);
@@ -802,7 +817,7 @@
     const ox = worldGroup.position.x, oz = worldGroup.position.z;      // 정면 맞춘 자리(시트 기준점)
     const along = (x, z) => (x - ox) * fx + (z - oz) * fz;              // 앞쪽으로 얼마나 나가 있나
     const dt = Math.min(0.05, (now - (readControllers.t || now)) / 1000); readControllers.t = now;
-    let aNow = false, gi = 0, trig = 0;
+    let aNow = false, bNow = false, stickX = 0, gi = 0, trig = 0;
     const acc = { ctrl: [0, 0, 0], hand: [0, 0, 0] };                    // [앞쪽 합, 높이 합, 개수]
     padsNow = [];
     for (const src of session.inputSources) {
@@ -810,6 +825,8 @@
       if (gp && !src.hand) {
         if (gp.buttons[1] && gp.buttons[1].pressed) S.yaw = null;
         if (src.handedness === "right" && gp.buttons[4] && gp.buttons[4].pressed) aNow = true;
+        if (gp.buttons[5] && gp.buttons[5].pressed) bNow = true;                       // B(오른쪽) / Y(왼쪽)
+        if (gp.axes && gp.axes.length >= 4 && Math.abs(gp.axes[2]) > Math.abs(stickX)) stickX = gp.axes[2];
         padsNow.push(gp);
         if (gp.buttons[0]) trig = Math.max(trig, gp.buttons[0].value || (gp.buttons[0].pressed ? 1 : 0));
       }
@@ -827,6 +844,17 @@
       if (grips[gi]) { grips[gi].visible = true; grips[gi].position.set(pos.x, pos.y, pos.z); grips[gi].rotation.set(0, yaw, Math.PI / 2); gi++; }
     }
     for (; gi < grips.length; gi++) grips[gi].visible = false;
+    // 스틱 좌우: 영상을 천천히 돌림
+    if (Math.abs(stickX) > 0.35) { S.vYaw -= stickX * dt * 1.0; readControllers.yawDirty = now; }
+    else if (readControllers.yawDirty && now - readControllers.yawDirty > 500) { readControllers.yawDirty = 0; saveVYaw(); paintYaw(); }
+    // B/Y: 지금 바라보는 쪽(영상 속 진행 방향)을 배 앞쪽으로
+    if (bNow && !readControllers.bPrev && S.yaw !== null && headQuat) {
+      const dir = new window.THREE.Vector3(0, 0, -1).applyQuaternion(headQuat);
+      const look = Math.atan2(-dir.x, -dir.z);
+      S.vYaw += (S.yaw - look); S.vYaw = Math.atan2(Math.sin(S.vYaw), Math.cos(S.vYaw));
+      saveVYaw(); paintYaw(); haptic(0.5, 80);
+    }
+    readControllers.bPrev = bNow;
     if (aNow && !aPrev) { S.mode = S.mode === "smooth" ? "instant" : "smooth"; paintMode(); save(); }
     aPrev = aNow;
     S.trig = trig;
@@ -917,6 +945,7 @@
   const fmtPace = s => { s = Math.min(s, 599); return Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0"); };
 
   const api = window.__rowVR = {
+    reloadVideoYaw() { S.vYaw = loadVYaw(); paintYaw(); },
     setFormat(f) { S.format = f; save(); if (scene) buildVideoMeshes(); paintFormat && paintFormat(); },
     getState() { return S; },
     toggle() {
