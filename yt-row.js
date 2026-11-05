@@ -69,6 +69,17 @@
   const mkStat = (k) => { const w = el("div"); w.appendChild(el("div", "font:400 11px system-ui,sans-serif;color:#8d9ba1", k)); const v = el("div", "", "-"); w.appendChild(v); stats.appendChild(w); return v; };
   const sPace = mkStat("페이스/500m"), sSpm = mkStat("spm"), sRate = mkStat("배속");
   panel.appendChild(stats);
+  // 영상 상태: 미리 받아 둔 양(인터넷 문제인지), 화질, 못 그리고 버린 장면 비율(기기 성능 문제인지)
+  const bufLine = el("div", "font-size:12px;color:#8d9ba1;margin:-4px 0 10px;font-family:ui-monospace,Consolas,monospace", "");
+  let dq = { t: 0, d: 0 };
+  const bufText = () => {
+    const v = video(); if (!v) return "";
+    let ahead = 0; try { for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime + 0.5 && v.buffered.end(i) > v.currentTime) ahead = v.buffered.end(i) - v.currentTime; } catch (e) {}
+    let drop = ""; try { const q = v.getVideoPlaybackQuality(); const dt = q.totalVideoFrames - dq.t, dd = q.droppedVideoFrames - dq.d; if (dt > 30) { drop = " · 버린 장면 " + Math.round(100 * dd / dt) + "%"; dq = { t: q.totalVideoFrames, d: q.droppedVideoFrames }; } else if (bufText.last) drop = bufText.last; } catch (e) {}
+    if (drop) bufText.last = drop;
+    return "미리 받음 " + Math.round(ahead) + "초 · " + (v.videoHeight ? v.videoHeight + "p" : "-") + (drop || "");
+  };
+  panel.appendChild(bufLine);
 
   const settings = el("div", "display:none;border-top:1px solid #3d4a51;padding-top:10px;margin-top:4px");
   const segRow = (label, opts, get, set) => {
@@ -938,7 +949,7 @@
       step.ui = now;
       sPace.textContent = S.vSmooth > 0.3 ? fmtPace(500 / S.vSmooth) : "--:--";
       sSpm.textContent = Math.round(S.spm);
-      sRate.textContent = S.rate.toFixed(2);
+      sRate.textContent = S.rate.toFixed(2); bufLine.textContent = bufText();
       if (S.xr && texOK) setStatus("VR 실행 중 · 인식: " + S.srcText);
     }
   }

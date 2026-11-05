@@ -34,6 +34,17 @@
   const stat = (k) => { const b = el("div", "background:#0f1518;border-radius:8px;padding:6px 2px"); const v = el("div", "font:700 18px ui-monospace,Consolas,monospace", "-"); b.append(v, el("div", "font-size:11px;color:#8d9ba1", k)); stats.appendChild(b); return v; };
   const sSteps = stat("걸음"), sKmh = stat("km/h"), sRate = stat("영상 배속");
   panel.appendChild(stats);
+  // 영상 상태: 미리 받아 둔 양(인터넷 문제인지), 화질, 못 그리고 버린 장면 비율(기기 성능 문제인지)
+  const bufLine = el("div", "font-size:12px;color:#8d9ba1;margin:-4px 0 10px;font-family:ui-monospace,Consolas,monospace", "");
+  let dq = { t: 0, d: 0 };
+  const bufText = () => {
+    const v = video(); if (!v) return "";
+    let ahead = 0; try { for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime + 0.5 && v.buffered.end(i) > v.currentTime) ahead = v.buffered.end(i) - v.currentTime; } catch (e) {}
+    let drop = ""; try { const q = v.getVideoPlaybackQuality(); const dt = q.totalVideoFrames - dq.t, dd = q.droppedVideoFrames - dq.d; if (dt > 30) { drop = " · 버린 장면 " + Math.round(100 * dd / dt) + "%"; dq = { t: q.totalVideoFrames, d: q.droppedVideoFrames }; } else if (bufText.last) drop = bufText.last; } catch (e) {}
+    if (drop) bufText.last = drop;
+    return "미리 받음 " + Math.round(ahead) + "초 · " + (v.videoHeight ? v.videoHeight + "p" : "-") + (drop || "");
+  };
+  panel.appendChild(bufLine);
   const vrBtn = el("button", "width:100%;padding:14px;margin-bottom:12px;border-radius:10px;border:0;background:#5cc98a;color:#08140d;font-weight:700;font-size:16px;cursor:pointer", "VR 시작");
   panel.appendChild(vrBtn);   // 화면이 작아도 보이게 맨 위쪽에
   const btnCss = "flex:1;padding:8px 4px;border-radius:8px;border:1px solid rgba(160,180,190,.25);background:#0f1518;color:#e6ecee;cursor:pointer;font:inherit;font-size:13px";
@@ -353,7 +364,7 @@
   function ui(now) {
     if (!S.on) return; requestAnimationFrame(ui);
     if (now - uiT < 200) return; uiT = now;
-    sSteps.textContent = det.count; sKmh.textContent = S.kmhSmooth.toFixed(1); sRate.textContent = S.rate.toFixed(2);
+    sSteps.textContent = det.count; sKmh.textContent = S.kmhSmooth.toFixed(1); sRate.textContent = S.rate.toFixed(2); bufLine.textContent = bufText();
     if (S.xr) setStatus(S.warn ? "⚠ " + S.warn : det.walking(S.t || 0) ? "걷는 중" : "VR 실행 중 · 걸으면 출발해요");
   }
   requestAnimationFrame(ui);
