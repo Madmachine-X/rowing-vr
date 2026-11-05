@@ -32,7 +32,7 @@
   // 상태
   // ======================================================================
   const S = {
-    on: true, mode: "smooth", tau: 3, vRef: 11 / 3.6, power: 1, format: "360", quality: "hd1440", water: true,
+    on: true, mode: "smooth", tau: 3, vRef: 11 / 3.6, power: 1, format: "360", quality: "hd1440", water: true, blend: true,
     p: 0, pPrev: 0, hv: 0, v: 0, vSmooth: 0, rate: 0, dist: 0,
     peak: false, strokes: [], spm: 0, strokeStart: 0,
     phase: "recovery", phaseT: 0, drivePower: 0, lastPower: 0.5, peakVel: 0,
@@ -42,7 +42,7 @@
     xr: false, hands: 0, last: performance.now(),
   };
   try { Object.assign(S, JSON.parse(localStorage.getItem("rowvr.yt3") || "{}")); } catch (e) {}
-  const save = () => { try { localStorage.setItem("rowvr.yt3", JSON.stringify({ mode: S.mode, tau: S.tau, vRef: S.vRef, power: S.power, format: S.format, quality: S.quality, water: S.water })); } catch (e) {} };
+  const save = () => { try { localStorage.setItem("rowvr.yt3", JSON.stringify({ mode: S.mode, tau: S.tau, vRef: S.vRef, power: S.power, format: S.format, quality: S.quality, water: S.water, blend: S.blend })); } catch (e) {} };
   const video = () => document.querySelector("video.html5-main-video") || document.querySelector("video");
   const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
   const smooth = (x) => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
@@ -76,6 +76,7 @@
   };
   const paintFormat = segRow("영상 형식", [["360", "360"], ["360tb", "360 입체"], ["180", "180 입체"]], () => S.format, k => { S.format = k; if (scene) buildVideoMeshes(); });
   if (!document.getElementById("rowvr-panel-host")) segRow("화질", [["hd1440", "1440p (부드럽게)"], ["hd2160", "4K (선명하게)"]], () => S.quality, k => { S.quality = k; setQuality(); });
+  segRow("장면 부드럽게 (느릴 때 끊김 줄임)", [["true", "켜기"], ["false", "끄기"]], () => S.blend, k => { S.blend = k === "true"; });
   segRow("소리", [["true", "물소리"], ["false", document.getElementById("rowvr-panel-host") ? "영상 원래 소리" : "유튜브 소리"]], () => S.water, k => { S.water = k === "true"; applySound(); });
   const paintMode = segRow("영상 속도 반응 (VR 안에서는 A 버튼)", [["smooth", "부드럽게"], ["instant", "즉각"]], () => S.mode, k => { S.mode = k; });
   const slider = (label, min, max, step, get, set, fmt) => {
@@ -244,7 +245,16 @@
   // 3D 장면
   // ======================================================================
   let renderer = null, scene = null, camera = null, worldGroup = null, videoGroup = null, boat = null;
-  let vtex = null, texOK = true, lastVideoTime = -1, hemi = null, sun = null;
+  let vtex = null, vtex2 = null, blendU = null, texOK = true, lastVideoTime = -1, hemi = null, sun = null, rateT = 0;
+  // 장면 섞기: 새 장면이 오면 두 텍스처 중 오래된 쪽에 올리고, 다음 장면이 올 때까지 이전→지금으로 서서히 넘어감
+  const FB = { cur: 0, frames: 0, lastWall: 0, interval: 1 / 30, fresh: false, vid: null, rvfc: false };
+  function watchFrames(vid) {
+    if (FB.vid === vid) return; FB.vid = vid; FB.frames = 0;
+    if (!vid.requestVideoFrameCallback) { FB.rvfc = false; return; }
+    FB.rvfc = true;
+    const on = () => { FB.fresh = true; if (FB.vid === vid) vid.requestVideoFrameCallback(on); };
+    vid.requestVideoFrameCallback(on);
+  }
   const WATER_Y = -0.92;          // 눈높이 기준 수면 높이
   const PIN_Y = -0.62, PIN_X = 0.80, PIN_Z = -0.05;
   const OUTBOARD = 1.98;          // 노받이~블레이드 끝
@@ -265,9 +275,9 @@
     hemi = new T.HemisphereLight(0xdfe9f3, 0x46524a, 1.25); scene.add(hemi);
     sun = new T.DirectionalLight(0xfff4e0, 1.0); sun.position.set(-2, 6, 3); scene.add(sun);
 
-    vtex = new T.Texture();
-    vtex.minFilter = T.LinearFilter; vtex.magFilter = T.LinearFilter; vtex.generateMipmaps = false;
-    if (vtex.encoding !== undefined) vtex.encoding = T.sRGBEncoding;
+    const mkTex = () => { const x = new T.Texture(); x.minFilter = T.LinearFilter; x.magFilter = T.LinearFilter; x.generateMipmaps = false; return x; };
+    vtex = mkTex(); vtex2 = mkTex();
+    blendU = { tA: { value: vtex }, tB: { value: vtex2 }, k: { value: 1 }, useB: { value: 0 } };
     buildVideoMeshes();
     buildBoat();
   }
@@ -280,7 +290,11 @@
   function buildVideoMeshes() {
     const T = window.THREE;
     while (videoGroup.children.length) { const m = videoGroup.children.pop(); m.geometry.dispose(); m.material.dispose(); }
-    const mat = () => new T.MeshBasicMaterial({ map: vtex, depthWrite: false, toneMapped: false });
+    const mat = () => new T.ShaderMaterial({
+      uniforms: blendU, depthWrite: false, toneMapped: false,
+      vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+      fragmentShader: "uniform sampler2D tA; uniform sampler2D tB; uniform float k; uniform float useB; varying vec2 vUv; void main(){ vec4 a = texture2D(tA, vUv); vec4 b = texture2D(tB, vUv); vec4 cur = mix(a, b, useB); vec4 prev = mix(b, a, useB); gl_FragColor = vec4(mix(prev.rgb, cur.rgb, k), 1.0); }",
+    });
     const R = 200;
     if (S.format === "360") {
       const g = new T.SphereGeometry(R, 96, 64); g.scale(-1, 1, 1);
@@ -688,10 +702,21 @@
   function uploadVideo() {
     const vid = video();
     if (!vid || vid.readyState < 3 || !texOK) return;
-    if (vid.currentTime === lastVideoTime) return;
-    lastVideoTime = vid.currentTime;
-    if (vtex.image !== vid) vtex.image = vid;
-    vtex.needsUpdate = true;
+    const now = performance.now() / 1000;
+    watchFrames(vid);
+    let isNew;
+    if (FB.rvfc) { isNew = FB.fresh || FB.frames === 0; FB.fresh = false; }
+    else { const fi = Math.floor(vid.currentTime * 30); isNew = fi !== lastVideoTime; lastVideoTime = fi; }
+    if (isNew) {
+      FB.cur = 1 - FB.cur;
+      const t = FB.cur === 0 ? vtex : vtex2;
+      if (t.image !== vid) t.image = vid; t.needsUpdate = true;
+      if (FB.frames < 2) { const o = FB.cur === 0 ? vtex2 : vtex; o.image = vid; o.needsUpdate = true; }
+      const gap = now - FB.lastWall; FB.lastWall = now; FB.frames++;
+      if (gap > 0.005 && gap < 1.5) FB.interval += (gap - FB.interval) * 0.15;
+      blendU.useB.value = FB.cur;
+    }
+    blendU.k.value = S.blend ? Math.min(1, (now - FB.lastWall) / Math.max(0.001, FB.interval * 0.9)) : 1;
   }
 
   // ======================================================================
@@ -875,8 +900,9 @@
     if (vid && S.xr) {
       if (S.rate < 0.07) { if (!vid.paused) vid.pause(); }
       else {
-        const r = Math.max(0.07, S.rate);
-        if (Math.abs(vid.playbackRate - r) > 0.01) vid.playbackRate = r;
+        // 재생 속도는 0.05 단위로, 자주 바꾸지 않기 (바꿀 때마다 유튜브가 잠깐 멈칫함). 큰 변화(브레이크 등)는 바로
+        const r = Math.max(0.1, Math.round(S.rate * 20) / 20), t2 = performance.now() / 1000, diff = Math.abs(vid.playbackRate - r);
+        if (diff >= 0.15 || (diff >= 0.05 && t2 - rateT > (S.mode === "instant" ? 0.25 : 0.6))) { vid.playbackRate = r; rateT = t2; }
         if (vid.paused) vid.play().catch(() => {});
       }
     }
@@ -920,6 +946,7 @@
         phys(dt) { const now = performance.now(); S.last = now - dt * 1000; step(now); },
         step(dt, p) { S.pPrev = S.p; S.p = p; S.hv = (S.p - S.pPrev) / dt; if (S.phase !== "brake") { S.v = Math.max(S.v, 3); S.vSmooth = 3; } updateOars(dt); updateFx(dt); updateBoatMotion(dt); drawCoach(performance.now() + 1000 * Math.random()); },
         render() { renderer.render(scene, camera); },
+        upload() { texOK = true; uploadVideo(); return { k: +blendU.k.value.toFixed(2), interval: +FB.interval.toFixed(3) }; },
         counts() { return { puddles: puddles.length, spray: spray.length, drops: drops.length, phase: S.phase, puddleZ: puddles.map(m => +m.position.z.toFixed(2)), puddleOp: puddles.map(m => +m.material.opacity.toFixed(2)) }; },
       };
     },
