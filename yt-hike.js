@@ -11,11 +11,11 @@
 
   // ---------- 상태 ----------
   const S = {
-    on: true, walk: "inplace", tmKmh: 3.0, vRefKmh: 4.0, baseCad: 105, tau: 1.5, format: "360", quality: "hd1440", sound: "nature", surface: "gravel", stream: false,
+    on: true, walk: "inplace", tmKmh: 3.0, vRefKmh: 4.0, baseCad: 105, tau: 1.5, format: "360", quality: "hd1440", sound: "nature", surface: "gravel", stream: false, blend: true,
     kmh: 0, kmhSmooth: 0, rate: 0, dist: 0, xr: false, yaw: null, warn: "", warnT: 0,
   };
   try { Object.assign(S, JSON.parse(localStorage.getItem("rowvr.hike1") || "{}")); } catch (e) {}
-  const save = () => { try { localStorage.setItem("rowvr.hike1", JSON.stringify({ walk: S.walk, tmKmh: S.tmKmh, vRefKmh: S.vRefKmh, baseCad: S.baseCad, tau: S.tau, format: S.format, quality: S.quality, sound: S.sound, surface: S.surface, stream: S.stream })); } catch (e) {} };
+  const save = () => { try { localStorage.setItem("rowvr.hike1", JSON.stringify({ walk: S.walk, tmKmh: S.tmKmh, vRefKmh: S.vRefKmh, baseCad: S.baseCad, tau: S.tau, format: S.format, quality: S.quality, sound: S.sound, surface: S.surface, stream: S.stream, blend: S.blend })); } catch (e) {} };
   const video = () => document.querySelector("video.html5-main-video") || document.querySelector("video");
   const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
   let det = new StepDetector();
@@ -63,6 +63,7 @@
   const paintFormat = segRow("영상 형식", [["360", "360"], ["360tb", "360 입체"], ["180", "180 입체"]], () => S.format, k => { S.format = k; if (scene) buildVideoMeshes(); }, settings);
   segRow("발소리", [["gravel", "자갈길"], ["dirt", "흙길"], ["leaf", "낙엽"], ["off", "끄기"]], () => S.surface, k => { S.surface = k; }, settings);
   segRow("계곡물 소리", [["true", "켜기"], ["false", "끄기"]], () => S.stream, k => { S.stream = k === "true"; updateAmbGains(); }, settings);
+  segRow("장면 부드럽게 (느리게 걸을 때 끊김 줄임)", [["true", "켜기"], ["false", "끄기"]], () => S.blend, k => { S.blend = k === "true"; }, settings);
   segRow("화질", [["hd1440", "1440p (부드럽게)"], ["hd2160", "4K (선명하게)"]], () => S.quality, k => { S.quality = k; setQuality(); }, settings);
   stepper("촬영 당시 걷던 속도", () => S.vRefKmh, v => S.vRefKmh = v, 0.5, 2, 7, v => v.toFixed(1) + " km/h", settings);
   stepper("부드러움 (속도가 바뀌는 데 걸리는 시간)", () => S.tau, v => S.tau = v, 0.5, 0.5, 5, v => v.toFixed(1) + "초", settings);
@@ -135,15 +136,26 @@
   }
 
   // ---------- 3D: 영상 구 + 발밑 안내판 ----------
-  let renderer, scene, camera, videoGroup, vtex, hud, hudCtx, hudTex, texOK = false, lastVideoTime = -1;
+  let renderer, scene, camera, videoGroup, vtex, vtex2, blendU, hud, hudCtx, hudTex, texOK = false, lastVideoTime = -1;
+  // 장면 섞기: 새 장면이 오면 두 텍스처 중 오래된 쪽에 올리고, 다음 장면이 올 때까지 이전→지금으로 서서히 넘어감
+  const FB = { cur: 0, frames: 0, lastWall: 0, interval: 1 / 30, fresh: false, vid: null, rvfc: false };
+  // 영상이 '실제로 새 장면을 보여 줄 때'를 알려 주는 기능(requestVideoFrameCallback) 사용. 없으면 재생 시간으로 추정
+  function watchFrames(vid) {
+    if (FB.vid === vid) return; FB.vid = vid;
+    if (!vid.requestVideoFrameCallback) return;
+    FB.rvfc = true;
+    const on = () => { FB.fresh = true; if (FB.vid === vid) vid.requestVideoFrameCallback(on); };
+    vid.requestVideoFrameCallback(on);
+  }
   function initScene() {
     renderer = new T.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(1); renderer.xr.enabled = true; renderer.xr.setReferenceSpaceType("local-floor");
     if (renderer.outputEncoding !== undefined) renderer.outputEncoding = T.sRGBEncoding;
     scene = new T.Scene(); camera = new T.PerspectiveCamera(80, 1, 0.03, 500);
     videoGroup = new T.Group(); scene.add(videoGroup);
-    vtex = new T.Texture(); vtex.minFilter = T.LinearFilter; vtex.magFilter = T.LinearFilter; vtex.generateMipmaps = false;
-    if (vtex.encoding !== undefined) vtex.encoding = T.sRGBEncoding;
+    const mkTex = () => { const x = new T.Texture(); x.minFilter = T.LinearFilter; x.magFilter = T.LinearFilter; x.generateMipmaps = false; return x; };
+    vtex = mkTex(); vtex2 = mkTex();
+    blendU = { tA: { value: vtex }, tB: { value: vtex2 }, k: { value: 1 }, useB: { value: 0 } };
     buildVideoMeshes();
     const c = document.createElement("canvas"); c.width = 768; c.height = 256; hudCtx = c.getContext("2d");
     hudTex = new T.CanvasTexture(c); hudTex.minFilter = T.LinearFilter;
@@ -153,7 +165,12 @@
   function editUV(geo, fu, fv) { const uv = geo.attributes.uv; for (let i = 0; i < uv.count; i++) { if (fu) uv.setX(i, fu(uv.getX(i))); if (fv) uv.setY(i, fv(uv.getY(i))); } uv.needsUpdate = true; return geo; }
   function buildVideoMeshes() {
     while (videoGroup.children.length) { const m = videoGroup.children.pop(); m.geometry.dispose(); m.material.dispose(); }
-    const mat = () => new T.MeshBasicMaterial({ map: vtex, depthWrite: false, toneMapped: false }), R = 200;
+    const mat = () => new T.ShaderMaterial({
+      uniforms: blendU, depthWrite: false, toneMapped: false,
+      vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+      // useB=0: A가 지금 장면, B가 직전 장면 / useB=1: 반대. k: 0=직전, 1=지금
+      fragmentShader: "uniform sampler2D tA; uniform sampler2D tB; uniform float k; uniform float useB; varying vec2 vUv; void main(){ vec4 a = texture2D(tA, vUv); vec4 b = texture2D(tB, vUv); vec4 cur = mix(a, b, useB); vec4 prev = mix(b, a, useB); gl_FragColor = vec4(mix(prev.rgb, cur.rgb, k), 1.0); }",
+    }), R = 200;
     if (S.format === "360") { const g = new T.SphereGeometry(R, 96, 64); g.scale(-1, 1, 1); const m = new T.Mesh(g, mat()); m.rotation.y = -Math.PI / 2; videoGroup.add(m); }
     else if (S.format === "360tb") {
       for (const eye of [1, 2]) { const g = new T.SphereGeometry(R, 96, 64); g.scale(-1, 1, 1); editUV(g, null, v => eye === 1 ? 0.5 + v * 0.5 : v * 0.5); const m = new T.Mesh(g, mat()); m.rotation.y = -Math.PI / 2; m.layers.set(eye); videoGroup.add(m); }
@@ -163,8 +180,24 @@
   }
   function uploadVideo() {
     const vid = video(); if (!vid || vid.readyState < 3 || !texOK) return;
-    if (vid.currentTime === lastVideoTime) return; lastVideoTime = vid.currentTime;
-    if (vtex.image !== vid) vtex.image = vid; vtex.needsUpdate = true;
+    const now = performance.now() / 1000;
+    watchFrames(vid);
+    let isNew;
+    if (FB.rvfc) { isNew = FB.fresh; FB.fresh = false; if (FB.frames === 0) isNew = true; }
+    else { const fi = Math.floor(vid.currentTime * 30); isNew = fi !== lastVideoTime; lastVideoTime = fi; }   // 30장/초로 가정
+    if (isNew) {
+      // 새 장면: 오래된 쪽 텍스처에 올리고 그쪽을 '지금'으로
+      FB.cur = 1 - FB.cur;
+      const t = FB.cur === 0 ? vtex : vtex2;
+      if (t.image !== vid) t.image = vid; t.needsUpdate = true;
+      if (FB.frames < 2) { const o = FB.cur === 0 ? vtex2 : vtex; if (o.image !== vid) { o.image = vid; o.needsUpdate = true; } }
+      const gap = now - FB.lastWall; FB.lastWall = now; FB.frames++;
+      if (gap > 0.005 && gap < 1.5) FB.interval += (gap - FB.interval) * 0.15;   // 장면이 바뀌는 평균 간격
+      blendU.useB.value = FB.cur;
+    }
+    // 섞는 비율: 장면 간격의 대부분 동안 서서히 넘어감 (빠른 재생에선 거의 바로 바뀜)
+    const span = Math.max(0.001, FB.interval * 0.9);
+    blendU.k.value = S.blend ? Math.min(1, (now - FB.lastWall) / span) : 1;
   }
   function drawHud() {
     const g = hudCtx, W = 768, H = 256, warn = S.warn;
@@ -191,13 +224,14 @@
     let r = 0; for (let k = 1; k < 4; k++) { let lo = Infinity, hi = -Infinity; for (const q of h) { lo = Math.min(lo, q[k]); hi = Math.max(hi, q[k]); } r = Math.max(r, hi - lo); }
     return r > 0.05;
   }
-  let start = null, handsOffT = null, warnBuzz = 0;
+  let start = null, handsOffT = null, warnBuzz = 0, lastWalkT = -10, rateT = 0;
   function update(t, dt, head, hands) {
     S.t = t;
     const ev = det.push(t, head.y);
     if (ev && S.xr) playStep(ev.amp);
     hands.forEach((p, i) => { if (p) handH[i].push([t, p.x, p.y, p.z]); });
-    const walking = det.walking(t);
+    if (det.walking(t)) lastWalkT = t;
+    const walking = t - lastWalkT < 0.8 || det.walking(t);              // 0.8초 여유
     S.kmh = !walking ? 0 : S.walk === "treadmill" ? S.tmKmh : cadenceToKmh(det.cadence, S.baseCad) * (4.0 / 3.8);
     const tau = S.kmh < S.kmhSmooth ? Math.min(S.tau, 1.0) : S.tau;          // 멈출 때는 더 빨리 섬
     S.kmhSmooth += (S.kmh - S.kmhSmooth) * (1 - Math.exp(-dt / tau));
@@ -220,7 +254,12 @@
   function applyVideo() {
     const vid = video(); if (!vid || !S.xr) return;
     if (S.rate < 0.07) { if (!vid.paused) vid.pause(); }
-    else { const r = Math.max(0.07, S.rate); if (Math.abs(vid.playbackRate - r) > 0.01) vid.playbackRate = r; if (vid.paused) vid.play().catch(() => {}); }
+    else {
+      const r = Math.max(0.1, Math.round(S.rate * 20) / 20);           // 0.05 단위로
+      const now = performance.now() / 1000, diff = Math.abs(vid.playbackRate - r);
+      if (diff >= 0.15 || (diff >= 0.05 && now - rateT > 0.7)) { vid.playbackRate = r; rateT = now; }
+      if (vid.paused) vid.play().catch(() => {});
+    }
   }
   let pads = [];
   function haptic(v, ms) { for (const g of pads) { const h = g.hapticActuators && g.hapticActuators[0]; if (h && h.pulse) h.pulse(v, ms).catch(() => {}); } }
@@ -314,6 +353,13 @@
     _hud() { if (!renderer) initScene(); drawHud(); return hudCtx.canvas.toDataURL(); },
     _audio() { initAudio(); return { actx: !!actx, loaded: SB ? { gravel: SB.gravel.length, dirt: SB.dirt.length, leaf: SB.leaf.length, amb: SB.amb.length } : null }; },
     _step(amp) { playStep(amp || 0.02); },
-    _reset() { det = new StepDetector(); S.kmhSmooth = 0; S.dist = 0; S.yaw = null; start = null; handH[0] = []; handH[1] = []; },
+    _render(w, h) {   // 테스트용: VR 없이 한 장면 그리기
+      if (!renderer) initScene(); texOK = true;
+      if (!renderer.domElement.parentNode) { renderer.setSize(w || 320, h || 180); document.body.appendChild(renderer.domElement); }
+      uploadVideo(); renderer.render(scene, camera);
+      const g = renderer.getContext(), px = new Uint8Array(4); g.readPixels((w || 320) >> 1, (h || 180) >> 1, 1, 1, g.RGBA, g.UNSIGNED_BYTE, px);
+      return { k: +blendU.k.value.toFixed(2), px: px[0], interval: +FB.interval.toFixed(3) };
+    },
+    _reset() { lastWalkT = -10; det = new StepDetector(); S.kmhSmooth = 0; S.dist = 0; S.yaw = null; start = null; handH[0] = []; handH[1] = []; },
   };
 })();
